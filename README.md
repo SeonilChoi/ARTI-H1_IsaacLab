@@ -10,7 +10,10 @@ Isaac Sim 5.1.0, Isaac Lab 0.54.3, skrl 2.0.0, PyTorch 2.7.0 (cu128); onnxruntim
 
 ## Install
 
+Linux (Ubuntu 22.04 / 24.04) and Windows both work. The robot USD files are stored with Git LFS, so install it first.
+
 ```bash
+git lfs install
 git clone <this repo> arti_h1 && cd arti_h1
 python -m pip install -e source/arti_h1      # python with Isaac Lab installed
 python -m pip install onnxruntime onnx        # only for ONNX export
