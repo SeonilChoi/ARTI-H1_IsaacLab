@@ -1,135 +1,85 @@
-# Template for Isaac Lab Projects
+# arti_h1: AMP 보행 정책 학습 (Isaac Lab)
 
-## Overview
+ARTI-H1 이족 로봇의 AMP(Adversarial Motion Priors) 보행 정책을 학습한다. 기본 설정(cfg 기본값)이 곧 현재 학습(run35)
+설정이라, 추가 인자 없이 학습 명령 한 줄로 같은 학습이 재현된다. 학습한 정책은 ONNX로 내보내
+[humanoid_controller](https://github.com/SeonilChoi/humanoid_controller) 의 `config/robot/ARTI-H1/agent.onnx` 로 배포한다.
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+## 환경
 
-**Key Features:**
+| 항목 | 버전 |
+|---|---|
+| Isaac Sim | 5.1.0 |
+| Isaac Lab | 0.54.3 |
+| skrl | 2.0.0 |
+| PyTorch | 2.7.0 (cu128) |
+| onnxruntime | 1.31.0 (ONNX 내보내기 / 검증용) |
 
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
-
-**Keywords:** extension, template, isaaclab
-
-## Installation
-
-- Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
-  We recommend using the conda or uv installation as it simplifies calling Python scripts from the terminal.
-
-- Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
-
-- Using a python interpreter that has Isaac Lab installed, install the library in editable mode using:
-
-    ```bash
-    # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/arti_h1
-
-- Verify that the extension is correctly installed by:
-
-    - Listing the available tasks:
-
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/list_envs.py
-        ```
-
-    - Running a task:
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/<RL_LIBRARY>/train.py --task=<TASK_NAME>
-        ```
-
-    - Running a task with dummy agents:
-
-        These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly.
-
-        - Zero-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/zero_agent.py --task=<TASK_NAME>
-            ```
-        - Random-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/random_agent.py --task=<TASK_NAME>
-            ```
-
-### Set up IDE (Optional)
-
-To setup the IDE, please follow these instructions:
-
-- Run VSCode Tasks, by pressing `Ctrl+Shift+P`, selecting `Tasks: Run Task` and running the `setup_python_env` in the drop down menu.
-  When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.
-
-If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
-The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
-This helps in indexing all the python modules for intelligent suggestions while writing code.
-
-### Setup as Omniverse Extension (Optional)
-
-We provide an example UI extension that will load upon enabling your extension defined in `source/arti_h1/arti_h1/ui_extension_example.py`.
-
-To enable your extension, follow these steps:
-
-1. **Add the search path of this project/repository** to the extension manager:
-    - Navigate to the extension manager using `Window` -> `Extensions`.
-    - Click on the **Hamburger Icon**, then go to `Settings`.
-    - In the `Extension Search Paths`, enter the absolute path to the `source` directory of this project/repository.
-    - If not already present, in the `Extension Search Paths`, enter the path that leads to Isaac Lab's extension directory directory (`IsaacLab/source`)
-    - Click on the **Hamburger Icon**, then click `Refresh`.
-
-2. **Search and enable your extension**:
-    - Find your extension under the `Third Party` category.
-    - Toggle it to enable your extension.
-
-## Code formatting
-
-We have a pre-commit template to automatically format your code.
-To install pre-commit:
+## 설치
 
 ```bash
-pip install pre-commit
+# Isaac Lab 설치: https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html
+git clone <this repo> arti_h1
+cd arti_h1
+python -m pip install -e source/arti_h1          # Isaac Lab 이 설치된 python
+python -m pip install onnxruntime onnx            # ONNX 내보내기에만 필요
 ```
 
-Then you can run pre-commit with:
+## 학습
 
 ```bash
-pre-commit run --all-files
+python scripts/skrl/train.py --task Template-Arti-H1-Amp-Direct-v0 --algorithm AMP --headless
 ```
 
-## Troubleshooting
+- 결과: `logs/skrl/arti_h1_amp_walk/<날짜>_amp_torch/` (체크포인트 `checkpoints/agent_<step>.pt`, 설정 `params/env.yaml`, `params/agent.yaml`)
+- 이어서 학습: `--checkpoint <agent_xxx.pt> env.curriculum_step_offset=<step>` (보조 토크 등 커리큘럼이 이어진 step 부터 진행)
+- 진행 확인: `PY=<isaac lab python> bash scripts/tuning/check.sh` (TensorBoard 요약)
 
-### Pylance Missing Indexing of Extensions
+### 현재 학습 설정 (run35)
 
-In some VsCode versions, the indexing of part of the extensions is missing.
-In this case, add the path to your extension in `.vscode/settings.json` under the key `"python.analysis.extraPaths"`.
+- 기준 모션 `assets/motions/arti_h1_slow`: motion_generator 로 만든 느리고 조심스러운 보행 1000개
+  (걸음 주기 1.5 s, 한 걸음 0.75 s, 이중지지 0.25 s, 발 높이 30 mm) + 정지 클립 `1000.json` (샘플링 15 %).
+- 명령 (0, 0, 0) = 제자리 정지·균형: 게이트 시계가 다음 rest phase(0.427 / 0.927, 이중지지 중앙)까지만 가서 멈추고
+  (`gait_rest_phases`), 정지 보상(두 발 접지, 관절 속도)으로 학습한다. 같은 규칙이 ONNX 와 humanoid_controller 에 있다.
+- 잔차 정책: q_des = 기본 자세 + 정책 action + ILC 공칭 보행 테이블(`arti_h1_slow_nominal_gait_command.npy`).
+- 실물 관절 범위(`real_joint_limits`, humanoid_controller motor.yaml), hip_roll ±15°.
+- sim2real: 실측 액추에이터 모델(지연·관성·쿨롱 마찰, 실물 게인), 관절 속도 관측 잡음, Unitree 피드백 누락,
+  관절 영점·IMU 장착 오차, MTi-3 IMU 잡음·바이어스·지연.
 
-```json
-{
-    "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/arti_h1"
-    ]
-}
+## 평가 / 영상 / 배포
+
+```bash
+M=source/arti_h1/arti_h1/assets/motions
+# 명령 시퀀스 평가 (전진/정지/옆/후진/대각/회전, 32 env)
+python -u scripts/tuning/eval_gait.py --mode sequence --checkpoint <pt> --headless --num_envs 32 --uniform_action_scale 0.0 \
+    --motion_folder $M/arti_h1_slow --nominal_table $M/arti_h1_slow_nominal_gait_command.npy --hip_roll_limit 0.2618
+# 영상 (40 s, 중간 push 포함): logs/tuning/videos/<name>.mp4
+PY=<isaac lab python> bash scripts/tuning/record_video.sh <pt> <name>
+# ONNX 내보내기 + 검증
+python scripts/pt_to_onnx.py --checkpoint <pt> --output policy.onnx
+python -u scripts/tuning/verify_onnx.py <pt> policy.onnx
+python -u scripts/tuning/check_onnx_in_env.py --onnx policy.onnx --headless \
+    --motion_folder $M/arti_h1_slow --nominal_table $M/arti_h1_slow_nominal_gait_command.npy --hip_roll_limit 0.2618
 ```
 
-### Pylance Crash
+배포 시 humanoid_controller `robot.yaml` policy: `gait_phase_rate: 0.66667`, `initial_gait_phase: 0.927`,
+`gait_rest_phases: [0.427, 0.927]`, `command_max` = 학습 명령 범위 (0.046, 0.0172, 0.0456).
 
-If you encounter a crash in `pylance`, it is probable that too many files are indexed and you run out of memory.
-A possible solution is to exclude some of omniverse packages that are not used in your project.
-To do so, modify `.vscode/settings.json` and comment out packages under the key `"python.analysis.extraPaths"`
-Some examples of packages that can likely be excluded are:
+## 기준 모션 다시 만들기
 
-```json
-"<path-to-isaac-sim>/extscache/omni.anim.*"         // Animation packages
-"<path-to-isaac-sim>/extscache/omni.kit.*"          // Kit UI tools
-"<path-to-isaac-sim>/extscache/omni.graph.*"        // Graph UI tools
-"<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
-...
+```bash
+# motion_generator (env_placo) 의 config/arti_h1_slow 로 1000개 생성 (MOTION_GENERATOR=<motion_generator 경로>)
+python scripts/tuning/gen_motions.py arti_h1_slow 1000 10
+python scripts/tuning/make_stand_clip.py $M/arti_h1_slow/0.json $M/arti_h1_slow/1000.json --phase 0.927 --weight 176
+python scripts/tuning/reference_stats.py $M/arti_h1_slow
+python -u scripts/tuning/ilc_nominal.py --headless --iters 3 --motion_dir $M/arti_h1_slow --hip_roll_limit 0.2618 \
+    --gait_phase_rate 0.66667 --out $M/arti_h1_slow_nominal_gait_command.npy
+# 모션 재생 확인 (humanoid_controller example_action 용 yaml + 영상)
+python scripts/replay_demo.py --motion_set arti_h1_slow --index 292 --output logs/replay_demo/slow_292.yaml \
+    --no_realtime --video logs/tuning/videos/replay_slow_292.mp4 --headless --enable_cameras
 ```
+
+## 실물 로그 분석
+
+humanoid_controller 런타임 로그(`robot.yaml log_file`)를 학습 환경과 비교한다:
+`python scripts/tuning/analyze_robot_log.py <log.csv> --onnx <agent.onnx>`
+(observation 계산, IMU, 관절, ONNX 재현 일관성 확인).
