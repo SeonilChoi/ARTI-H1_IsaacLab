@@ -1023,6 +1023,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self._stand_reward = standing * (
             contact.all(dim=-1).float() * self.cfg.stand_feet_contact_reward_scale
             - torch.sum(torch.square(self.robot.data.joint_vel), dim=-1) * self.cfg.stand_joint_vel_reward_scale
+            - (torch.abs(self.robot.data.root_ang_vel_w[:, 2]) + torch.linalg.norm(self.robot.data.root_lin_vel_w[:, :2], dim=-1))
+            * self.cfg.stand_base_motion_reward_scale
         )
         self._gait_swing_contact_penalty = (
             (expected_swing & contact).float().sum(dim=-1) * moving_command.float() * -self.cfg.gait_swing_contact_penalty_scale

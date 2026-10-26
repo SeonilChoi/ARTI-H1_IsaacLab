@@ -100,8 +100,8 @@ agent:
   # (run 2026-09-23_16-30-36). Back to equal weights now that the gait terms guard the task side.
   # run31: 0.4/0.6 - run30 lost style (0.475 -> 0.42) and looked stiff; lean on the reference motion.
   # run15 (new robot): 0.3/0.7 - run14 plateaued 1M steps at style .34, disc acc .98; lean harder on the reference.
-  task_reward_scale: 0.4
-  style_reward_scale: 0.6
+  task_reward_scale: 0.5
+  style_reward_scale: 0.5
   discriminator_batch_size: 4096
   discriminator_logit_regularization_scale: 0.05
   discriminator_gradient_penalty_scale: 5.0

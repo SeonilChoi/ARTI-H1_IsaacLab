@@ -397,6 +397,8 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # Standing (zero command) rewards: both soles down, and -scale * sum(joint_vel^2).
     stand_feet_contact_reward_scale = 0.5
     stand_joint_vel_reward_scale = 0.01
+    # run36: -scale * (|yaw rate| + |planar base speed|) while standing; run35 turned in place at -0.017 rad/s.
+    stand_base_motion_reward_scale = 5.0
     gait_swing_start_phase = (0.5107, 0.0107)  # (left, right)
     gait_swing_duration_phase = 0.3333
     gait_swing_height = 0.030
