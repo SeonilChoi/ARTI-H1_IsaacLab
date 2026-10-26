@@ -12,6 +12,16 @@ table = torch.tensor(np.load(table_file)); print(f"[VERIFY] nominal table {table
 model = m.OnnxPolicy(actor, norm, m.infer_uniform_action_scale(ckpt), m._env_yaml_float(ckpt, "action_scale_min", 0.0),
                      m._env_yaml_float(ckpt, "hip_yaw_action_scale_min", 0.0), table,
                      m._env_yaml_float(ckpt, "decimation", 4.0) / 240.0 * m._env_yaml_float(ckpt, "gait_phase_rate", 0.0)).eval()
+if m._env_yaml_str(ckpt, "real_joint_limits", "").strip().lower() == "true":
+    # same real motor.yaml limits as pt_to_onnx.py / the env (cfg real_joint_limits)
+    real = {"hip_yaw": (-0.7056, 0.7056), "hip_roll": (-0.2854, 0.4), "hip_pitch": (-0.7404, 0.5),
+            "knee": (-0.5, 1.5258), "ankle_pitch": (-0.5, 0.7453), "ankle_roll": (-1.5216, 0.5)}
+    for i, n in enumerate(m.ISAAC_JOINT_NAMES):
+        model.joint_lower[i], model.joint_upper[i] = real[n.split("_", 1)[1]]
+rest = m._env_yaml_list(ckpt, "gait_rest_phases")
+if rest:
+    model.rest_phases = rest
+    model.stand_threshold = m._env_yaml_float(ckpt, "stand_command_threshold", 0.0)
 hrl = m._env_yaml_float(ckpt, "hip_roll_limit", 0.0)
 for i, n in enumerate(m.ISAAC_JOINT_NAMES):
     if hrl > 0.0 and n.endswith("hip_roll"):
