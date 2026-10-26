@@ -337,7 +337,7 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     nominal_gait_bins = 64
     # Sag/lag-compensated command table (bins x joints, robot joint order) from scripts/tuning/ilc_nominal.py.
     # With the plain reference table the stance knee sags and the swing sole reaches only 2-5 mm (run8: no lift).
-    nominal_gait_table_file = os.path.join(ISAACLAB_ASSETS_DIR, "motions", "arti_h1_slow_nominal_gait_command.npy")
+    nominal_gait_table_file = os.path.join(ISAACLAB_ASSETS_DIR, "motions", "arti_h1_nominal_gait_command.npy")
     balance_support_kp = 40.0
     balance_support_kd = 2.0
     balance_support_fade_steps = (150_000, 600_000)
@@ -546,5 +546,5 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     events: ArtiH1EventCfg = ArtiH1EventCfg()
 
     dt = 1 / 240 * 4
-    motion_folder_path = os.path.join(ISAACLAB_ASSETS_DIR, "motions", "arti_h1_slow")
+    motion_folder_path = os.path.join(ISAACLAB_ASSETS_DIR, "motions", "arti_h1")
 ArtiH1EnvCfg = ArtiH1AmpEnvCfg

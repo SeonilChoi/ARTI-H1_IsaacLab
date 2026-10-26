@@ -21,9 +21,10 @@ if num > len(cmds):
                          for dth in fine(b["dth_bounds"])) if c not in coarse]
     rng = np.random.default_rng(0)
     cmds += [extra[i] for i in rng.choice(len(extra), num - len(cmds), replace=False)]
-cmds = cmds[:num]
+# (0, 0, 0) is the standing clip (make_stand_clip.py), not stepping in place
+cmds = [c for c in cmds if any(c)][:num]
 seen = set(cmds)
-script = f"{root}/src/motion_generator/_gg_{robot}.py"
+script = f"{root}/src/motion_generator/gait_generator.py"
 def run(i):
     dx, dy, dth = cmds[i]
     out = f"{root}/data/{robot}/{i}.json"

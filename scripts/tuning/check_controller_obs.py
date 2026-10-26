@@ -4,8 +4,8 @@ Uses the URDF directly (forward kinematics from the joint origins / axes, like p
 simulated robot state, so a mismatch points at a convention difference between the controller and the env
 (joint rotation encoding, toe frame, heading frame, joint order).
 
-    python -u scripts/tuning/check_controller_obs.py --headless --motion_folder .../arti_h1_slow \
-        --nominal_table .../arti_h1_slow_nominal_gait_command.npy --hip_roll_limit 0.2618
+    python -u scripts/tuning/check_controller_obs.py --headless --motion_folder .../arti_h1 \
+        --nominal_table .../arti_h1_nominal_gait_command.npy --hip_roll_limit 0.2618
 """
 import argparse
 

@@ -57,16 +57,8 @@ COMMANDS = [
 ]
 
 SEQ_DURATION_S = 5.0
+# Commands inside the training range (x .046 y .017 yaw .046) plus standing (zero command) segments.
 PLAY_SEQUENCE = [
-    ("forward", (0.050991, 0.0, 0.0)),
-    ("side_left", (0.0, 0.020460, 0.0)),
-    ("backward", (-0.042926, 0.0, 0.0)),
-    ("diagonal_right", (0.044725, -0.020481, 0.0)),
-    ("turn_left", (0.0, 0.0, 0.042439)),
-    ("forward", (0.050991, 0.0, 0.0)),
-]
-# arti_h1_slow runs (command range x .046 y .017 yaw .046): slower commands plus standing (zero command) segments.
-SLOW_SEQUENCE = [
     ("forward", (0.040, 0.0, 0.0)),
     ("stand", (0.0, 0.0, 0.0)),
     ("side_left", (0.0, 0.015, 0.0)),
@@ -76,8 +68,6 @@ SLOW_SEQUENCE = [
     ("turn_left", (0.0, 0.0, 0.040)),
     ("stand", (0.0, 0.0, 0.0)),
 ]
-if args_cli.motion_folder and "slow" in args_cli.motion_folder:
-    PLAY_SEQUENCE = SLOW_SEQUENCE
 
 
 class StepMeter:

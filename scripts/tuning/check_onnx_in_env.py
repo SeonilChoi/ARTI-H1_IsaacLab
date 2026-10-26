@@ -4,7 +4,7 @@ This is the deployment check for humanoid_controller: the robot sends ONNX q_des
 the ONNX 'actions' output back as previous_actions, so q_des must equal robot.data.joint_pos_target every step.
 
     python -u scripts/tuning/check_onnx_in_env.py --onnx <policy.onnx> --headless \
-        --motion_folder .../arti_h1_slow --nominal_table .../arti_h1_slow_nominal_gait_command.npy --hip_roll_limit 0.2618
+        --motion_folder .../arti_h1 --nominal_table .../arti_h1_nominal_gait_command.npy --hip_roll_limit 0.2618
 """
 import argparse
 

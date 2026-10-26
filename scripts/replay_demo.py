@@ -8,7 +8,7 @@
 The YAML has the same layout as humanoid_controller/config/*.yaml: joint_targets[i] (rad, Isaac joint order) is what
 example_action sends to the motors at dt; observations[i] is the 116-dim policy observation of that step.
 
-    python scripts/replay_demo.py --motion_set arti_h1_slow --index 292 --output logs/replay_demo/slow_292.yaml --headless
+    python scripts/replay_demo.py --motion_set arti_h1 --index 292 --output logs/replay_demo/292.yaml --headless
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -22,7 +22,7 @@ TASK_NAME = "Template-Arti-H1-Amp-Direct-v0"
 NUM_ENVS = 1
 
 parser = argparse.ArgumentParser(description="Replay a recorded Arti H1 demo motion.")
-parser.add_argument("--motion_set", type=str, default="arti_h1_slow", help="Folder under assets/motions.")
+parser.add_argument("--motion_set", type=str, default="arti_h1", help="Folder under assets/motions.")
 parser.add_argument("--index", type=int, default=0, help="Motion JSON index to replay, e.g. 0 for 0.json.")
 parser.add_argument("--loop", action="store_true", default=False, help="Loop the selected motion.")
 parser.add_argument("--output", type=str, default=None, help="YAML log path. Default: logs/replay_demo/<index>.yaml.")

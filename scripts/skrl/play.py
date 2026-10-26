@@ -123,16 +123,8 @@ import arti_h1.tasks  # noqa: F401
 PLAY_COMMAND_DURATION_S = 5.0
 VIDEO_CAMERA_EYE = (0.3, -2.8, 0.82)
 VIDEO_CAMERA_LOOKAT = (0.3, 0.0, 0.08)
+# Commands inside the training range (x .046 y .017 yaw .046) plus standing (zero command) segments.
 PLAY_COMMAND_SEQUENCE = (
-    ("forward", (0.050991, 0.0, 0.0)),
-    ("side_left", (0.0, 0.020460, 0.0)),
-    ("backward", (-0.042926, 0.0, 0.0)),
-    ("diagonal_right", (0.044725, -0.020481, 0.0)),
-    ("turn_left", (0.0, 0.0, 0.042439)),
-    ("forward", (0.050991, 0.0, 0.0)),
-)
-# arti_h1_slow runs (command range x .046 y .017 yaw .046): slower commands plus standing (zero command) segments.
-PLAY_SLOW_SEQUENCE = (
     ("forward", (0.040, 0.0, 0.0)),
     ("stand", (0.0, 0.0, 0.0)),
     ("side_left", (0.0, 0.015, 0.0)),
@@ -247,9 +239,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     # override configurations with non-hydra CLI arguments
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    global PLAY_COMMAND_SEQUENCE
-    if "slow" in str(getattr(env_cfg, "motion_folder_path", "")):
-        PLAY_COMMAND_SEQUENCE = PLAY_SLOW_SEQUENCE
     env_cfg.episode_length_s = PLAY_COMMAND_DURATION_S * len(PLAY_COMMAND_SEQUENCE)
     # Training-only balance support torque must never act during play.
     if hasattr(env_cfg, "balance_support_kp"):
