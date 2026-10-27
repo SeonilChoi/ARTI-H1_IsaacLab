@@ -70,6 +70,19 @@ PLAY_SEQUENCE = [
 ]
 
 
+# Lateral sole-centre distance (left - right, along the heading's left axis) over every metered step, all segments.
+# Self-collisions are off in sim, so the soles (9 cm wide) can overlap below 0.09 m without any contact.
+WIDTHS = []
+
+
+def width_report(tag):
+    if not WIDTHS:
+        return
+    w = torch.cat(WIDTHS)
+    print(f"[WIDTH] {tag} lateral sole distance mean {w.mean()*1000:.1f} p5 {torch.quantile(w, 0.05)*1000:.1f} "
+          f"min {w.min()*1000:.1f} mm | time < 90 mm (soles overlap) {100*(w < 0.09).float().mean():.2f}%")
+
+
 class StepMeter:
     """Step length at each touchdown: (touching foot - other foot) along the heading, per foot."""
 
@@ -151,6 +164,9 @@ class StepMeter:
             w, x, y, z = q.unbind(-1)
             yaw = torch.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
             head = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=-1)
+            lat = torch.stack((-head[:, 1], head[:, 0]), dim=-1)
+            wd = ((feet[:, 0, :2] - feet[:, 1, :2]) * lat).sum(-1)
+            WIDTHS.append(wd[active] if active is not None else wd)
             for foot in (0, 1):
                 td = contact[:, foot] & ~self.prev[:, foot]
                 if active is not None:
@@ -383,6 +399,7 @@ def main():
         kpk = [float(np.mean(ref_meter.knee_peaks[i])) if ref_meter.knee_peaks[i] else float("nan") for i in (0, 1)]
         mz = ref_meter.max_z[ok].mean(0).tolist()
         print(f"[EVAL-REF] knee lift (peak - stance) L {(kpk[0]-kst[0])*1000:.1f} R {(kpk[1]-kst[1])*1000:.1f} mm | foot max height L {mz[0]*1000:.1f} R {mz[1]*1000:.1f} mm")
+        width_report("reference")
         for i in range(min(12, uenv.num_envs)):
             print(f"  clip{motion_ids[i]:4d} cmd {target[i].tolist()} got {[round(v, 4) for v in vel[i].tolist()]} fell={bool(fell[i])}")
     elif args_cli.mode == "policy":
@@ -504,7 +521,8 @@ def main():
         tau = torch.stack(all_tau)[:, ~fell]; vel = torch.stack(all_vel)[:, ~fell]
         tau = tau.reshape(-1, tau.shape[-1]); vel = vel.reshape(-1, vel.shape[-1])
         rpm = 60.0 / (2 * math.pi)
-        print("[MOTOR] joint              torque Nm rms / p99 / max      speed rpm rms / p99 / max   (deg/s max)")
+        width_report("sequence")
+        print("[MOTOR] joint             torque Nm rms / p99 / max      speed rpm rms / p99 / max   (deg/s max)")
         for i, jn in enumerate(uenv.robot.data.joint_names):
             t, v = tau[:, i], vel[:, i]
             print(f"[MOTOR] {jn:18s} {t.pow(2).mean().sqrt():6.2f} / {torch.quantile(t, 0.99):6.2f} / {t.max():6.2f}"

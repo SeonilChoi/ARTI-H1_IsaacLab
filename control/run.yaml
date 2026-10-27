@@ -1,14 +1,15 @@
 # control/run.yaml  (코드 저장소에 커밋)
 # 이 파일이 바뀌어 push될 때만 서버 학습 상태가 바뀝니다. 코드만 push하면 학습은 그대로 유지됩니다.
-rev: 3                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
+rev: 4                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
 
-mode: restart           # restart | resume | continue | stop
+mode: resume           # restart | resume | continue | stop
 resume:
   checkpoint: latest    # latest | <run폴더>/checkpoints/agent_N.pt
   curriculum_step_offset: auto   # auto = (해당 run의 offset + N) | 숫자 직접 지정
 
-# 서버 GPU가 작업 전송 병목(4096 env 13 it/s, 138W/350W) → env 2배. 미니배치 32k 유지(mini_batches x2),
-# AMP 기준 동작/replay 버퍼도 env에 맞춰 2배, 체크포인트 25MB라 20000 step마다, PhysX patch 버퍼 2배.
-args: ["--num_envs", "8192", "agent.agent.mini_batches=12", "agent.agent.amp_batch_size=1024", "agent.reply_buffer.memory_size=2000000", "agent.agent.experiment.checkpoint_interval=20000", "env.sim.physx.gpu_max_rigid_patch_count=327680"]
+# 8192 env 설정 유지 (서버 GPU 작업 전송 병목). exp1: 06-44-49 run 이어서, task/style .5/.5 -> .3/.7
+# (style .27 -> .18 하락, disc acc .99; run15 에서 .3/.7 이 평가 손해 없이 style 을 올림)
+# + 발 간격 보상 foot_width -20 (cfg 기본값, 300k 평가에서 발바닥 겹침 41 %, 사용자: 발을 서로 밟으며 걸음)
+args: ["--num_envs", "8192", "agent.agent.mini_batches=12", "agent.agent.amp_batch_size=1024", "agent.reply_buffer.memory_size=2000000", "agent.agent.experiment.checkpoint_interval=20000", "env.sim.physx.gpu_max_rigid_patch_count=327680", "agent.agent.task_reward_scale=0.3", "agent.agent.style_reward_scale=0.7"]
 
 publish: []             # 주기 외에 추가로 올릴 체크포인트. 예: ["2026-10-27_10-00-00_amp_torch/checkpoints/agent_45000.pt"]

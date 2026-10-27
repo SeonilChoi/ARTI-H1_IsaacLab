@@ -417,6 +417,11 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # |cycle-averaged x_right - x_left| in the heading frame (L1). Quadratic -100/-400 plateaued at 2 / 1.2 cm
     # (runs 05-45-58 / 07-15-59); L1 -8 costs -0.08 at 1 cm and keeps a constant pull down to 0.
     foot_stagger_reward_scale = -8.0
+    # -scale * max(0, foot_min_width - lateral sole-centre distance) (m), heading frame, every step (not curriculum
+    # scaled). Self-collisions are off, so run 2026-10-27_06-44-49 300k walked with the soles overlapping 41 % of the
+    # time (distance mean 90 / p5 2 / min -22 mm, soles are 90 mm wide); the reference stays at 146 mean / 115 min mm.
+    foot_min_width = 0.115
+    foot_width_reward_scale = -20.0
     # Per touchdown: -scale * |step_k - step_(k-1)| (m). A 2 cm alternating gap costs ~-0.045 per control step.
     # -60 left a 0.75 cm forward gap (run 2026-09-24_09-41-10 plateau); -150.
     step_symmetry_reward_scale = -150.0

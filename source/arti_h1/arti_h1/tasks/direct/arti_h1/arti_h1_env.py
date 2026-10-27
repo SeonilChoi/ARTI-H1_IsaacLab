@@ -735,6 +735,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             + self._gait_swing_contact_penalty
             + self._gait_height_reward
             + self._foot_stagger_reward
+            + self._foot_width_reward
             + self._step_symmetry_reward
             + self._foot_flat_reward
             + self._foot_ang_vel_reward
@@ -772,6 +773,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             "Reward/gait_swing_contact": self._gait_swing_contact_penalty.mean(),
             "Reward/gait_swing_height": self._gait_height_reward.mean(),
             "Reward/foot_stagger": self._foot_stagger_reward.mean(),
+            "Reward/foot_width": self._foot_width_reward.mean(),
             "Reward/step_symmetry": self._step_symmetry_reward.mean(),
             "Reward/foot_flat": self._foot_flat_reward.mean(),
             "Reward/swing_foot_ang_vel": self._foot_ang_vel_reward.mean(),
@@ -785,6 +787,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
             "Gait/base_roll_abs_deg": torch.abs(self._base_roll_deg).mean(),
             "Gait/foot_tilt_deg": self._foot_tilt_deg.mean(),
             "Gait/foot_stagger_abs": torch.abs(self.foot_stagger_ema).mean(),
+            "Gait/foot_width_m": self._foot_width.mean(),
+            "Gait/foot_overlap_fraction": (self._foot_width < 2 * self.cfg.foot_sole_half_width).float().mean(),
             "Gait/air_ratio_left": 1.0 - feet_contact[:, 0].float().mean(),
             "Gait/air_ratio_right": 1.0 - feet_contact[:, 1].float().mean(),
             "Progress/forward": _masked_mean(progress[:, 0], planar_command[:, 0] > self.cfg.signed_progress_min_command),
@@ -946,6 +950,9 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.foot_stagger_ema.lerp_(local_feet[:, 1, 0] - local_feet[:, 0, 0], self.foot_stagger_alpha)
         # L1: the quadratic form flattened out at ~1.2 cm (run 2026-09-24_07-15-59).
         self._foot_stagger_reward = torch.abs(self.foot_stagger_ema) * self.cfg.foot_stagger_reward_scale
+        # Lateral sole-centre distance (left - right): the feet must not cross or overlap (no self-collisions in sim).
+        self._foot_width = local_feet[:, 0, 1] - local_feet[:, 1, 1]
+        self._foot_width_reward = torch.clamp(self.cfg.foot_min_width - self._foot_width, min=0.0) * self.cfg.foot_width_reward_scale
 
         # Step-length symmetry, paid at each touchdown: |step_k - step_(k-1)| where step = (touching sole -
         # other sole) along the heading. A symmetric gait alternates equal steps, so this is 0 there.
