@@ -1,8 +1,8 @@
 # control/run.yaml  (코드 저장소에 커밋)
 # 이 파일이 바뀌어 push될 때만 서버 학습 상태가 바뀝니다. 코드만 push하면 학습은 그대로 유지됩니다.
-rev: 1                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
+rev: 2                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
 
-mode: resume            # restart | resume | continue | stop
+mode: restart           # restart | resume | continue | stop
 resume:
   checkpoint: latest    # latest | <run폴더>/checkpoints/agent_N.pt
   curriculum_step_offset: auto   # auto = (해당 run의 offset + N) | 숫자 직접 지정
