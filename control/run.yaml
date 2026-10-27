@@ -1,0 +1,13 @@
+# control/run.yaml - read by the AWS server loop (arti-training-results/auto_train.sh).
+# The server changes the training only when this file changes; code-only pushes keep the training running.
+# Note: the server hashes the whole file, so editing `publish` alone re-applies `mode` (use mode: continue for that).
+rev: 1                  # bump to re-apply the same settings
+
+mode: stop              # restart | resume | continue | stop
+resume:
+  checkpoint: latest    # latest | <run>/checkpoints/agent_N.pt (relative to logs/skrl/arti_h1_amp_walk)
+  curriculum_step_offset: auto   # auto = offset of the checkpoint's run + N | a number
+
+args: []                # extra train.py args, e.g. ["--num_envs", "4096", "env.uniform_action_scale=0.6"]
+
+publish: []             # extra checkpoints to push, e.g. ["2026-10-27_10-00-00_amp_torch/checkpoints/agent_45000.pt"]
