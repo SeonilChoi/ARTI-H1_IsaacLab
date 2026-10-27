@@ -5,10 +5,22 @@
 #  - 주기적으로 결과 저장소에 params / summary.txt / agent_N.pt(LFS) push
 #  - 서버 재부팅 / 학습 프로세스 비정상 종료 시 최신 체크포인트에서 자동 resume (MAX_CRASH_RESUMES회까지)
 #  - 이 스크립트나 env가 pull로 바뀌면 스스로 다시 실행 (컨테이너 안의 학습은 그대로 유지)
+#  - bash는 스크립트를 조금씩 읽으며 실행하므로, git pull이 바꿀 수 있는 저장소 파일 대신
+#    상태 폴더에 복사한 사본을 실행하고, 본문은 main()으로 감싸 한 번에 읽힘
+if [ -z "${AUTOTRAIN_REPO_SELF:-}" ]; then
+  AUTOTRAIN_REPO_SELF=$(readlink -f "$0"); export AUTOTRAIN_REPO_SELF
+  _copy=/opt/isaac/automation/state/$(basename "${1:?usage: auto_train.sh <config.env>}" .env)/auto_train.running.sh
+  if mkdir -p "${_copy%/*}" && cp "$AUTOTRAIN_REPO_SELF" "$_copy.tmp" && mv -f "$_copy.tmp" "$_copy"; then
+    exec bash "$_copy" "$@"
+  fi
+  echo "사본 실행 실패 → 저장소 파일을 직접 실행: $AUTOTRAIN_REPO_SELF" >&2
+fi
+
+main(){
 set -uo pipefail
 
 CFG=$(readlink -f "${1:?usage: auto_train.sh <config.env>}")
-SELF=$(readlink -f "$0")                       # cd 뒤에도 다시 실행할 수 있게 절대 경로로
+SELF=$AUTOTRAIN_REPO_SELF                      # 다시 실행할 때는 저장소의 (새) 버전을 실행
 # shellcheck disable=SC1090
 source "$CFG"
 : "${BRANCH:=main}" "${POLL_SEC:=60}" "${PUSH_INTERVAL_SEC:=21600}" "${PUBLISH_EVERY_STEPS:=300000}" "${MAX_CRASH_RESUMES:=3}"
@@ -235,7 +247,7 @@ while true; do
           NEED_REBUILD=1; log "의존성 파일 변경 → 다음 restart/resume 때 이미지 재빌드"
         fi
         if echo "$changed" | grep -qxE "scripts/automation/(auto_train\.sh|$NAME\.env)"; then
-          log "auto_train.sh / $NAME.env 변경 → 새 버전으로 다시 실행 (학습은 유지)"; NEED_REBUILD=$NEED_REBUILD exec bash "$SELF" "$CFG"
+          log "auto_train.sh / $NAME.env 변경 → 새 버전으로 다시 실행 (학습은 유지)"; NEED_REBUILD=$NEED_REBUILD AUTOTRAIN_REPO_SELF= exec bash "$SELF" "$CFG"
         fi
       else
         log "pull 실패 → 서버 작업 폴더에 수정된 파일이 있는지 확인 (git status)"
@@ -252,3 +264,5 @@ while true; do
   if (( $(date +%s) - last_push >= PUSH_INTERVAL_SEC )); then push_results; last_push=$(date +%s); fi
   sleep "$POLL_SEC"
 done
+}
+main "$@"; exit

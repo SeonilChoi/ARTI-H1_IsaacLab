@@ -60,6 +60,8 @@
 
 - Change training: edit `control/run.yaml` (`mode`, `resume`, `args`) and push. Code-only pushes take effect at the
   next restart / resume. Changes to `auto_train.sh` / `arti_h1.env` make the loop re-run itself (training continues).
+  The loop runs a copy (`/opt/isaac/automation/state/<robot>/auto_train.running.sh`), never the repo file that
+  `git pull` rewrites, and its body is one `main` function so bash reads it whole.
 - Resume keeps the curriculum: `curriculum_step_offset: auto` = the checkpoint run's offset (its `params/env.yaml`) + N.
 - To continue a local run on the server, copy the run dir (`params/` + the checkpoint) to
   `/opt/isaac/workspace/project/arti_h1/logs/skrl/arti_h1_amp_walk/` and set `resume.checkpoint` to
