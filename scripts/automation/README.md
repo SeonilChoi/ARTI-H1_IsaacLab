@@ -41,7 +41,7 @@
 3. Clones (paths from `arti_h1.env`):
    ```bash
    git clone git@github-arti-h1:SeonilChoi/ARTI-H1_IsaacLab.git /opt/isaac/workspace/project/arti_h1
-   GIT_LFS_SKIP_SMUDGE=1 git clone git@github-results:SeonilChoi/arti-training-results.git /opt/isaac/results/repo
+   GIT_LFS_SKIP_SMUDGE=1 git clone git@github-results:SeonilChoi/arti-training-results.git /opt/isaac/results/repo/arti-training-results
    ```
 4. Image (needs the `isaac-lab-base` image on the server):
    ```bash
