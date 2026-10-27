@@ -5,6 +5,9 @@ ARG PROJECT_PATH_ARG
 ENV PROJECT_PATH=${PROJECT_PATH_ARG}
 USER root
 
+# procps: the server loop checks / stops training with pgrep / pkill inside the container
+RUN apt-get update && apt-get install -y --no-install-recommends procps && rm -rf /var/lib/apt/lists/*
+
 # Copy project (exclusions are in .dockerignore at repo root)
 COPY . ${PROJECT_PATH}
 
