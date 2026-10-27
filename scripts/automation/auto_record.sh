@@ -3,7 +3,8 @@
 # arti-training-results.   bash scripts/automation/auto_record.sh
 # Each new <robot>/<run>/checkpoints/agent_N.pt is downloaded on its own (LFS bandwidth), copied with its params to
 # logs/remote/<robot>/<run>/ and recorded by record_video.sh to logs/tuning/videos/aws_<run>_<N>.mp4.
-# Done list: logs/automation/recorded.txt (a checkpoint that fails 3 times is marked gave-up).
+# Done list: logs/automation/recorded.txt (a checkpoint that fails 3 times is marked gave-up), failures also in failed.txt.
+# Videos stay local (logs/ is gitignored); nothing is ever pushed to arti-training-results.
 cd "$(dirname "$0")/../.."
 ROBOT=arti_h1
 RESULTS_DIR=${RESULTS_DIR:-../arti-training-results}
@@ -49,6 +50,7 @@ for pt in $(cd "$RESULTS_DIR" && ls "$ROBOT"/*/checkpoints/agent_*.pt 2>/dev/nul
     if [ -f "logs/tuning/videos/$NAME.mp4" ]; then echo "$NAME ok" >> "$ST/recorded.txt"; log "recorded $NAME"
     else
         echo "$NAME fail" >> "$ST/recorded.txt"; log "recording FAILED: $NAME (see logs/tuning/video_$NAME.log)"
+        echo "$(date '+%F %T') $pt" >> "$ST/failed.txt"
         [ "$(grep -c "^$NAME fail$" "$ST/recorded.txt")" -ge 3 ] && echo "$NAME gave-up" >> "$ST/recorded.txt"
     fi
 done
