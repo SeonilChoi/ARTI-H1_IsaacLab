@@ -28,6 +28,7 @@ parser.add_argument("--no_randomization", action="store_true", help="disable sta
 parser.add_argument("--uniform_action_scale", type=float, default=0.6, help="must match how the checkpoint was trained")
 parser.add_argument("--motion_folder", type=str, default=None, help="reference motion set the checkpoint was trained on")
 parser.add_argument("--nominal_table", type=str, default=None, help="nominal gait table the checkpoint was trained with")
+parser.add_argument("--push", choices=["cfg", "old"], default="cfg", help="sequence pushes: cfg values, or the pre-10-28 weak pushes (0.04 m/s every 10-15 s)")
 parser.add_argument("--hip_roll_limit", type=float, default=None, help="hard +-limit (rad) on hip_roll, as in training")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -211,6 +212,9 @@ def make_env():
     if args_cli.mode == "sequence":
         # Same conditions as scripts/skrl/play.py: trained reset strategy, pushes on, 30 s episode.
         cfg.episode_length_s = SEQ_DURATION_S * len(PLAY_SEQUENCE) + 1.0
+        if args_cli.push == "old":
+            cfg.events.push_robot.interval_range_s = (10.0, 15.0)
+            cfg.events.push_robot.params["velocity_range"] = {"x": (-0.04, 0.04), "y": (-0.04, 0.04), "yaw": (-0.15, 0.15)}
         if hasattr(cfg, "reset_standstill_probability"):
             cfg.reset_standstill_probability = 0.0  # keep results comparable with earlier runs
     else:
