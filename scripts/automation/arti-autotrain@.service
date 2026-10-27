@@ -1,0 +1,15 @@
+# /etc/systemd/system/arti-autotrain@.service
+# 사용: sudo systemctl enable --now arti-autotrain@arti_h1   (→ /opt/isaac/automation/arti_h1.env)
+[Unit]
+Description=Isaac Lab auto-train loop (%i)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=iicuser
+ExecStart=/opt/isaac/automation/auto_train.sh /opt/isaac/automation/%i.env
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

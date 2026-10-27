@@ -1,13 +1,12 @@
-# control/run.yaml - read by the AWS server loop (arti-training-results/auto_train.sh).
-# The server changes the training only when this file changes; code-only pushes keep the training running.
-# Note: the server hashes the whole file, so editing `publish` alone re-applies `mode` (use mode: continue for that).
-rev: 1                  # bump to re-apply the same settings
+# control/run.yaml  (코드 저장소에 커밋)
+# 이 파일이 바뀌어 push될 때만 서버 학습 상태가 바뀝니다. 코드만 push하면 학습은 그대로 유지됩니다.
+rev: 1                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
 
-mode: stop              # restart | resume | continue | stop
+mode: resume            # restart | resume | continue | stop
 resume:
-  checkpoint: latest    # latest | <run>/checkpoints/agent_N.pt (relative to logs/skrl/arti_h1_amp_walk)
-  curriculum_step_offset: auto   # auto = offset of the checkpoint's run + N | a number
+  checkpoint: latest    # latest | <run폴더>/checkpoints/agent_N.pt
+  curriculum_step_offset: auto   # auto = (해당 run의 offset + N) | 숫자 직접 지정
 
-args: []                # extra train.py args, e.g. ["--num_envs", "4096", "env.uniform_action_scale=0.6"]
+args: []                # train.py 추가 인자. 예: ["--num_envs", "4096", "env.some_param=1.0"]
 
-publish: []             # extra checkpoints to push, e.g. ["2026-10-27_10-00-00_amp_torch/checkpoints/agent_45000.pt"]
+publish: []             # 주기 외에 추가로 올릴 체크포인트. 예: ["2026-10-27_10-00-00_amp_torch/checkpoints/agent_45000.pt"]
