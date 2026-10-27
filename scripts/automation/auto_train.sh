@@ -3,20 +3,25 @@
 #  - 코드 저장소(main)를 polling: 코드만 바뀌면 pull만 하고 학습 유지
 #  - control/run.yaml 이 바뀌면 restart | resume | continue | stop 적용
 #  - 주기적으로 결과 저장소에 params / summary.txt / agent_N.pt(LFS) push
-#  - 서버 재부팅 등으로 학습이 끊겼으면 최신 체크포인트에서 자동 resume
+#  - 서버 재부팅 / 학습 프로세스 비정상 종료 시 최신 체크포인트에서 자동 resume (MAX_CRASH_RESUMES회까지)
+#  - 이 스크립트나 env가 pull로 바뀌면 스스로 다시 실행 (컨테이너 안의 학습은 그대로 유지)
 set -uo pipefail
 
-CFG=${1:?usage: auto_train.sh <config.env>}
+CFG=$(readlink -f "${1:?usage: auto_train.sh <config.env>}")
+SELF=$(readlink -f "$0")                       # cd 뒤에도 다시 실행할 수 있게 절대 경로로
 # shellcheck disable=SC1090
 source "$CFG"
-: "${BRANCH:=main}" "${POLL_SEC:=60}" "${PUSH_INTERVAL_SEC:=21600}" "${PUBLISH_EVERY_STEPS:=20000}"
+: "${BRANCH:=main}" "${POLL_SEC:=60}" "${PUSH_INTERVAL_SEC:=21600}" "${PUBLISH_EVERY_STEPS:=300000}" "${MAX_CRASH_RESUMES:=3}"
 
 NAME=$(basename "$CFG" .env)
 PY=/workspace/isaaclab/_isaac_sim/python.sh
 RUN_YAML=control/run.yaml
 LOG_ROOT=logs/skrl/$LOG_SUBDIR                 # 프로젝트 루트 기준 (호스트/컨테이너 공통)
 STATE_DIR=/opt/isaac/automation/state/$NAME
-APPLIED=$STATE_DIR/applied_hash                # 마지막으로 적용한 run.yaml 해시
+APPLIED=$STATE_DIR/applied_hash                # 마지막으로 적용한 run.yaml 해시 (publish 제외)
+APPLIED_FILE=$STATE_DIR/applied_file_hash      # run.yaml 파일 전체 해시 (publish만 바뀐 경우 감지용)
+CRASHES=$STATE_DIR/crash_resumes               # 현재 설정으로 자동 resume한 횟수
+CUR_LOG=$STATE_DIR/current_log                 # 지금 학습의 logs/train_<ts> (종료 코드 = <ts>.exit)
 RUNNING=$STATE_DIR/running                     # 이 스크립트가 시작한 학습이 진행 중이라는 표시
 OFFSETS=$STATE_DIR/offsets                     # "<run폴더> <curriculum_step_offset>"
 mkdir -p "$STATE_DIR"
@@ -25,10 +30,11 @@ TB_TAGS=("Episode / Total timesteps (mean)" "Reward/total" "Reward/linear_tracki
          "Tracking/linear_speed" "Tracking/yaw_speed" "AMP style reward" "Agent classification"
          "Motion classification" "Standard deviation" "Value loss" "Progress/" "Gait/" "Torque/")
 TB_TAGS_Q=$(printf '%q ' "${TB_TAGS[@]}")
-NEED_REBUILD=0
+NEED_REBUILD=${NEED_REBUILD:-0}                # 다시 실행할 때 넘겨받음
 
 log(){ echo "[$(date '+%F %T')] [$NAME] $*"; }
 cd "$PROJECT_DIR" || { log "PROJECT_DIR 없음: $PROJECT_DIR"; exit 1; }
+python3 -c "import yaml" 2>/dev/null || { log "python3-yaml 없음 → sudo apt install -y python3-yaml"; exit 1; }
 
 # ---------- 유틸 ----------
 is_training(){ docker exec "$CONTAINER" pgrep -f "skrl/train.py" >/dev/null 2>&1; }
@@ -40,7 +46,11 @@ latest_ckpt(){
   ls "$r"/checkpoints/agent_*.pt 2>/dev/null | grep -E 'agent_[0-9]+\.pt$' \
     | awk -F'agent_' '{s=$NF; sub(/\.pt$/,"",s); print s" "$0}' | sort -n | tail -1 | cut -d' ' -f2-
 }
-run_offset(){ local o; o=$(awk -v r="$(basename "$1")" '$1==r{print $2}' "$OFFSETS" 2>/dev/null | tail -1); echo "${o:-0}"; }
+run_offset(){  # 그 run이 실제로 쓴 값(params/env.yaml) 우선 → scp로 가져온 run도 auto로 이어짐
+  local o; o=$(sed -n 's/^curriculum_step_offset: *//p' "$1/params/env.yaml" 2>/dev/null | head -1)
+  [ -n "$o" ] || o=$(awk -v r="$(basename "$1")" '$1==r{print $2}' "$OFFSETS" 2>/dev/null | tail -1)
+  echo "${o:-0}"
+}
 
 read_run_yaml(){   # MODE CKPT OFFSET EXTRA_ARGS PUBLISH 설정
   eval "$(python3 - "$RUN_YAML" <<'PYEOF'
@@ -57,6 +67,9 @@ print("CKPT=" + q(str(r.get("checkpoint", "latest"))))
 print("OFFSET=" + q(str(r.get("curriculum_step_offset", "auto"))))
 print("EXTRA_ARGS=" + q(" ".join(q(str(a)) for a in (d.get("args") or []))))
 print("PUBLISH=" + q("\n".join(str(p) for p in (d.get("publish") or []))))
+import hashlib, json
+train = {k: v for k, v in d.items() if k != "publish"}
+print("TRAIN_HASH=" + hashlib.sha1(json.dumps(train, sort_keys=True, default=str).encode()).hexdigest())
 PYEOF
 )"
 }
@@ -95,7 +108,8 @@ start_training(){   # $1 = restart | resume
   "${COMPOSE[@]}" up -d >/dev/null
   local ts; ts=$(date +%Y%m%d_%H%M%S)
   touch "$STATE_DIR/start_marker"
-  docker exec -d "$CONTAINER" bash -c "cd \$PROJECT_PATH && mkdir -p logs && $PY scripts/skrl/train.py --task $TASK --algorithm $ALGO --headless $args $EXTRA_ARGS > logs/train_$ts.log 2>&1"
+  docker exec -d "$CONTAINER" bash -c "cd \$PROJECT_PATH && mkdir -p logs && $PY scripts/skrl/train.py --task $TASK --algorithm $ALGO --headless $args $EXTRA_ARGS > logs/train_$ts.log 2>&1; echo \$? > logs/train_$ts.exit"
+  echo "logs/train_$ts" > "$CUR_LOG"
   touch "$RUNNING"
   log "학습 시작: $mode ${ckpt:+ckpt=$ckpt offset=$off} log=logs/train_$ts.log commit=$(git rev-parse --short HEAD)"
   # 새 run 폴더가 생기면 offset 기록 (다음 resume 때 offset 누적 계산용)
@@ -118,11 +132,39 @@ apply_run_yaml(){
     continue)       log "mode=continue → 학습 유지 (publish/args 설정만 갱신)" ;;
     *)              log "알 수 없는 mode: $MODE (restart|resume|continue|stop)" ;;
   esac
-  yaml_hash > "$APPLIED"
+  echo "$TRAIN_HASH" > "$APPLIED"; yaml_hash > "$APPLIED_FILE"; echo 0 > "$CRASHES"
+}
+
+check_run_yaml(){   # 학습 설정이 바뀌면 적용, publish 목록만 바뀌면 학습은 그대로 두고 push만
+  read_run_yaml
+  if [ "$TRAIN_HASH" != "$(cat "$APPLIED" 2>/dev/null)" ]; then apply_run_yaml
+  elif [ "$(yaml_hash)" != "$(cat "$APPLIED_FILE" 2>/dev/null)" ]; then
+    log "run.yaml publish 목록 변경 → 학습 유지, 결과만 push"; push_results; yaml_hash > "$APPLIED_FILE"
+  fi
+}
+
+on_training_ended(){   # 이 스크립트가 멈추지 않았는데 학습 프로세스가 사라짐: 완료 또는 비정상 종료
+  rm -f "$RUNNING"
+  local lg ec n; lg=$(cat "$CUR_LOG" 2>/dev/null); ec=$(cat "$lg.exit" 2>/dev/null || echo none)
+  push_results
+  if [ "$ec" = 0 ]; then log "학습 완료 (exit 0, $lg.log)"; return 0; fi
+  n=$(cat "$CRASHES" 2>/dev/null || echo 0)
+  if [ "$n" -lt "$MAX_CRASH_RESUMES" ] && [ "$MODE" != stop ] && [ -n "$(latest_ckpt)" ]; then
+    echo $((n + 1)) > "$CRASHES"
+    log "학습 비정상 종료 (exit $ec, $lg.log) → 최신 체크포인트에서 resume ($((n + 1))/$MAX_CRASH_RESUMES)"
+    CKPT=latest; OFFSET=auto; rebuild_if_needed; start_training resume
+  else
+    log "학습 비정상 종료 (exit $ec, $lg.log) → 자동 resume 안 함 (횟수 $n/$MAX_CRASH_RESUMES 또는 체크포인트 없음)"
+  fi
 }
 
 # ---------- 결과 push ----------
+# arti_h1 / arti_d1 서비스가 같은 RESULTS_DIR clone을 쓰므로 잠금: 다른 쪽이 복사 중인 .pt를 커밋하거나
+# rebase 중에 겹치지 않게 함
 push_results(){
+  ( flock -w 1800 9 || { log "결과 저장소 잠금 대기 시간 초과 → 이번 push 건너뜀"; exit 0; }; _push_results ) 9>"$RESULTS_DIR/.git/autotrain.lock"
+}
+_push_results(){
   local rd; rd=$(latest_run); [ -n "$rd" ] || return 0
   local run; run=$(basename "$rd")
   local dst="$RESULTS_DIR/$RESULTS_SUBDIR/$run"
@@ -157,7 +199,7 @@ push_results(){
     [ -f "$pd/$(basename "$p")" ] || { cp "$LOG_ROOT/$p" "$pd/"; log "publish: $p"; }
   done <<< "${PUBLISH:-}"
 
-  git -C "$RESULTS_DIR" add -A
+  git -C "$RESULTS_DIR" add -A "$RESULTS_SUBDIR"
   if ! git -C "$RESULTS_DIR" diff --cached --quiet; then
     git -C "$RESULTS_DIR" commit -qm "[$NAME] $run $(date '+%F %T')"
     git -C "$RESULTS_DIR" pull -q --rebase origin HEAD 2>/dev/null
@@ -167,9 +209,12 @@ push_results(){
 
 # ---------- 시작 ----------
 read_run_yaml
+if [ "$(cat "$APPLIED" 2>/dev/null)" = "$(yaml_hash)" ]; then  # 이전 버전 상태(파일 전체 해시) → 재시작 없이 옮김
+  echo "$TRAIN_HASH" > "$APPLIED"; yaml_hash > "$APPLIED_FILE"
+fi
 if is_training; then
   log "학습 진행 중 → 감시 시작"; touch "$RUNNING"
-elif [ "$(yaml_hash)" != "$(cat "$APPLIED" 2>/dev/null)" ]; then
+elif [ "$TRAIN_HASH" != "$(cat "$APPLIED" 2>/dev/null)" ]; then
   apply_run_yaml
 elif [ -f "$RUNNING" ] && [ "$MODE" != stop ] && [ -n "$(latest_ckpt)" ]; then
   log "학습이 중간에 끊김(재부팅 등) → 최신 체크포인트에서 resume"
@@ -189,6 +234,9 @@ while true; do
         if echo "$changed" | grep -qE '^(docker/|source/[^/]+/(setup\.py|pyproject\.toml))'; then
           NEED_REBUILD=1; log "의존성 파일 변경 → 다음 restart/resume 때 이미지 재빌드"
         fi
+        if echo "$changed" | grep -qxE "scripts/automation/(auto_train\.sh|$NAME\.env)"; then
+          log "auto_train.sh / $NAME.env 변경 → 새 버전으로 다시 실행 (학습은 유지)"; NEED_REBUILD=$NEED_REBUILD exec bash "$SELF" "$CFG"
+        fi
       else
         log "pull 실패 → 서버 작업 폴더에 수정된 파일이 있는지 확인 (git status)"
       fi
@@ -197,11 +245,9 @@ while true; do
     log "fetch 실패 (네트워크/deploy key 확인)"
   fi
 
-  [ "$(yaml_hash)" != "$(cat "$APPLIED" 2>/dev/null)" ] && apply_run_yaml
+  check_run_yaml
 
-  if [ -f "$RUNNING" ] && ! is_training; then
-    rm -f "$RUNNING"; log "학습 프로세스 종료됨 (완료 또는 오류) → 최근 logs/train_*.log 확인"; push_results
-  fi
+  if [ -f "$RUNNING" ] && ! is_training; then on_training_ended; fi
 
   if (( $(date +%s) - last_push >= PUSH_INTERVAL_SEC )); then push_results; last_push=$(date +%s); fi
   sleep "$POLL_SEC"
