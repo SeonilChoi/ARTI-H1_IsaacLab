@@ -163,6 +163,17 @@ class ArtiH1EventCfg:
         },
     )
 
+    # The ankle roll holds ~6 Nm all the time (CoM 57 mm off the stance foot), so a CoM error matters on the real
+    # robot. Pelvis is half the mass: +-2 cm on its CoM moves the whole-robot CoM by ~+-1 cm.
+    pelvis_com = EventTerm(
+        func=mdp.randomize_rigid_body_com,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="pelvis"),
+            "com_range": {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "z": (-0.02, 0.02)},
+        },
+    )
+
     actuator_gains = EventTerm(
         func=mdp.randomize_actuator_gains,
         mode="startup",
@@ -177,11 +188,15 @@ class ArtiH1EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(10.0, 15.0),
+        interval_range_s=(4.0, 8.0),
         params={
             # Walking speed is only ~0.07 m/s, so the push has to stay small or it
             # swamps the velocity-tracking reward for a full averaging window.
-            "velocity_range": {"x": (-0.04, 0.04), "y": (-0.04, 0.04), "yaw": (-0.15, 0.15)},
+            # local push-robust run (10-28): was 0.04 m/s / yaw 0.15 every 10-15 s, no roll / pitch; the real robot
+            # rocked +-3 deg (sim +-0.6) and saturated after a -7.9 deg roll.
+            # L2 (10-28): x +-0.10 -> +-0.20; standpush L1 240k toppled 4/4 at front->back 0.30 m/s, no sagittal steps.
+            "velocity_range": {"x": (-0.20, 0.20), "y": (-0.10, 0.10), "yaw": (-0.2, 0.2),
+                               "roll": (-0.3, 0.3), "pitch": (-0.3, 0.3)},
         },
     )
 
@@ -506,7 +521,13 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     mti3_gyro_bias_range_rad_s = (-0.01, 0.01)
     imu_gyro_extra_delay_steps = 1
     # run34: per-episode constant IMU roll / pitch mounting error (rad, +-); 0 = off.
-    mti3_mount_tilt_range_rad = 0.02
+    # 10-28 robot logs: standing IMU pitch differs from the leg FK pitch by -6.8 .. +4.7 deg between runs (was 0.02).
+    mti3_mount_tilt_range_rad = 0.05
+    # 10-28 robot logs: with the joints locked (observe run) the MTi-3 roll / pitch still drift 2-3 deg per minute, and
+    # during walking the IMU - FK pitch gap grew to 6-8 deg. Bounded random walk (rad/sqrt(s)) on top of the mount
+    # error; 0 = off.
+    mti3_tilt_walk_std_rad_s = 0.008
+    mti3_tilt_max_rad = 0.08
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 240,
         render_interval=decimation,
