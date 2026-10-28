@@ -593,6 +593,7 @@ def standpush(env, uenv, obs, dt):
             fell |= (uenv.episode_length_buf < ep_before) | (trunk_height(uenv) < 0.2)
             up = quat_apply_inverse(hq, quat_apply(pq, up_z))
             tilt = torch.rad2deg(torch.acos(torch.clamp(up[:, 2], -1.0, 1.0)))
+            fell |= tilt > 45.0  # the eval env does not always reset a toppled robot (seen: 65-74 deg, fell 0)
             tilt_max = torch.maximum(tilt_max, torch.where(fell, tilt_max, tilt))
             rate = torch.rad2deg(quat_apply_inverse(hq, d.body_ang_vel_w[:, uenv.ref_body_index])[:, :2].norm(dim=-1))
             calm = (tilt < 2.0) & (rate < 10.0)
