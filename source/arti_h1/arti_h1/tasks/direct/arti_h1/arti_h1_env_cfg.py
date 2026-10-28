@@ -461,6 +461,9 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # Per touchdown: -scale * |ankle pitch range of this stride - other leg's last stride range| (rad). Like the knee
     # term, an 8 deg (0.14 rad) gap costs ~2.8 per touchdown at -20. Run26 had 31 / 23 deg (reference 26 / 26).
     ankle_pitch_symmetry_reward_scale = -20.0
+    # Same form for hip pitch (10-28, L2): eval L/R 21.5 / 15.0 deg (0.11 rad gap costs ~3.4 per touchdown at -30);
+    # on the robot the asymmetry showed up as alternating pelvis pitch rocking. Target: L/R within ~10 %.
+    hip_pitch_symmetry_reward_scale = -30.0
     # Per touchdown: scale * exp(-((lift - target) / sigma)^2).
     # 1.0 let the knee lift sink to 15-21 mm once the pelvis was held level (run 2026-09-25_09-25-22).
     knee_lift_reward_scale = 2.0

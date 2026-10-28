@@ -172,6 +172,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.ankle_pitch_min = torch.full((self.num_envs, 2), math.inf, dtype=torch.float32, device=self.device)
         self.last_ankle_pitch_rom = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self.has_last_ankle_pitch_rom = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.hip_pitch_ids = [self.robot.find_joints(n)[0][0] for n in ("left_hip_pitch", "right_hip_pitch")]
+        self.hip_pitch_max = torch.full((self.num_envs, 2), -math.inf, dtype=torch.float32, device=self.device)
+        self.hip_pitch_min = torch.full((self.num_envs, 2), math.inf, dtype=torch.float32, device=self.device)
+        self.last_hip_pitch_rom = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        self.has_last_hip_pitch_rom = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.last_swing_time = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
         self.has_last_swing = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.foot_stagger_alpha = min(1.0, self.step_dt / max(1.0 / self.cfg.gait_phase_rate, self.step_dt))
@@ -705,6 +710,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self._knee_symmetry_reward = self._knee_symmetry_reward * reg
         self._swing_symmetry_reward = self._swing_symmetry_reward * reg
         self._ankle_symmetry_reward = self._ankle_symmetry_reward * reg
+        self._hip_pitch_symmetry_reward = self._hip_pitch_symmetry_reward * reg
 
         signed_progress_reward = (
             torch.sum(progress * progress_active.float(), dim=-1)
@@ -742,6 +748,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             + self._knee_symmetry_reward
             + self._swing_symmetry_reward
             + self._ankle_symmetry_reward
+            + self._hip_pitch_symmetry_reward
             + self._knee_lift_reward
             + base_flat_reward
             + base_ang_vel_reward
@@ -780,6 +787,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             "Reward/knee_symmetry": self._knee_symmetry_reward.mean(),
             "Reward/swing_symmetry": self._swing_symmetry_reward.mean(),
             "Reward/ankle_pitch_symmetry": self._ankle_symmetry_reward.mean(),
+            "Reward/hip_pitch_symmetry": self._hip_pitch_symmetry_reward.mean(),
             "Reward/knee_lift": self._knee_lift_reward.mean(),
             "Reward/base_flat": base_flat_reward.mean(),
             "Reward/base_ang_vel": base_ang_vel_reward.mean(),
@@ -1023,6 +1031,27 @@ class ArtiH1AmpEnv(DirectRLEnv):
             ankle_sym_penalty * moving_command.float() * self.cfg.ankle_pitch_symmetry_reward_scale
         )
 
+        # Hip pitch range per stride, same form as the ankle term. L1/L2 swung the left hip 21.5 deg vs right 15.0 in
+        # eval, and on the robot (run35, L2 60k) this turned into phase-locked pitch rocking (9.6 deg vs sim 2.5).
+        hip_pitch = self.robot.data.joint_pos[:, self.hip_pitch_ids]
+        self.hip_pitch_max = torch.maximum(self.hip_pitch_max, hip_pitch)
+        self.hip_pitch_min = torch.minimum(self.hip_pitch_min, hip_pitch)
+        hip_sym_penalty = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
+        for foot in (0, 1):
+            touchdown = first_contact[:, foot] & torch.isfinite(self.hip_pitch_max[:, foot])
+            rom = self.hip_pitch_max[:, foot] - self.hip_pitch_min[:, foot]
+            gap = torch.abs(rom - self.last_hip_pitch_rom)
+            hip_sym_penalty = hip_sym_penalty + torch.where(
+                touchdown & self.has_last_hip_pitch_rom, gap, torch.zeros_like(gap)
+            )
+            self.last_hip_pitch_rom = torch.where(touchdown, rom, self.last_hip_pitch_rom)
+            self.has_last_hip_pitch_rom = self.has_last_hip_pitch_rom | touchdown
+            self.hip_pitch_max[:, foot] = torch.where(first_contact[:, foot], hip_pitch[:, foot], self.hip_pitch_max[:, foot])
+            self.hip_pitch_min[:, foot] = torch.where(first_contact[:, foot], hip_pitch[:, foot], self.hip_pitch_min[:, foot])
+        self._hip_pitch_symmetry_reward = (
+            hip_sym_penalty * moving_command.float() * self.cfg.hip_pitch_symmetry_reward_scale
+        )
+
         expected_swing, expected_height = self._expected_gait()
         contact_match = torch.where(expected_swing, ~contact, contact).float().mean(dim=-1)
         self._gait_contact_reward = contact_match * moving_command.float() * self.cfg.gait_contact_reward_scale
@@ -1207,6 +1236,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.ankle_pitch_min[env_ids] = math.inf
         self.last_ankle_pitch_rom[env_ids] = 0.0
         self.has_last_ankle_pitch_rom[env_ids] = False
+        self.hip_pitch_max[env_ids] = -math.inf
+        self.hip_pitch_min[env_ids] = math.inf
+        self.last_hip_pitch_rom[env_ids] = 0.0
+        self.has_last_hip_pitch_rom[env_ids] = False
         self.knee_stance_height[env_ids] = 0.0
         self.last_knee_lift[env_ids] = 0.0
         self.has_last_knee_lift[env_ids] = False
