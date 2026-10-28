@@ -1,15 +1,15 @@
 # control/run.yaml  (코드 저장소에 커밋)
 # 이 파일이 바뀌어 push될 때만 서버 학습 상태가 바뀝니다. 코드만 push하면 학습은 그대로 유지됩니다.
-rev: 4                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
+rev: 5                  # 같은 설정으로 다시 적용하고 싶으면 숫자만 올려서 push
 
 mode: resume           # restart | resume | continue | stop
 resume:
   checkpoint: latest    # latest | <run폴더>/checkpoints/agent_N.pt
   curriculum_step_offset: auto   # auto = (해당 run의 offset + N) | 숫자 직접 지정
 
-# 8192 env 설정 유지 (서버 GPU 작업 전송 병목). exp1: 06-44-49 run 이어서, task/style .5/.5 -> .3/.7
-# (style .27 -> .18 하락, disc acc .99; run15 에서 .3/.7 이 평가 손해 없이 style 을 올림)
-# + 발 간격 보상 foot_width -20 (cfg 기본값, 300k 평가에서 발바닥 겹침 41 %, 사용자: 발을 서로 밟으며 걸음)
+# 8192 env 설정 유지 (서버 GPU 작업 전송 병목). task/style .3/.7 유지 (exp1: style .27 -> .35-.38).
+# exp2 (10-28, 사용자: "서버도 L2랑 맞춰"): exp1 (06-44-49 이어서, foot_width -20) 의 최신 체크포인트에서 이어서,
+# 로컬 L2 와 같은 sim 코드: pelvis CoM DR +-2 cm, IMU 장착 기울기 0.05 + random walk 0.008, push 4-8 s x +-0.20 y +-0.10 yaw .2 roll/pitch .3
 args: ["--num_envs", "8192", "agent.agent.mini_batches=12", "agent.agent.amp_batch_size=1024", "agent.reply_buffer.memory_size=2000000", "agent.agent.experiment.checkpoint_interval=20000", "env.sim.physx.gpu_max_rigid_patch_count=327680", "agent.agent.task_reward_scale=0.3", "agent.agent.style_reward_scale=0.7"]
 
 publish: []             # 주기 외에 추가로 올릴 체크포인트. 예: ["2026-10-27_10-00-00_amp_torch/checkpoints/agent_45000.pt"]
