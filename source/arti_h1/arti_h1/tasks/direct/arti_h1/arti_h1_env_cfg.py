@@ -463,7 +463,8 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     ankle_pitch_symmetry_reward_scale = -20.0
     # Same form for hip pitch (10-28, L2): eval L/R 21.5 / 15.0 deg (0.11 rad gap costs ~3.4 per touchdown at -30);
     # on the robot the asymmetry showed up as alternating pelvis pitch rocking. Target: L/R within ~10 %.
-    hip_pitch_symmetry_reward_scale = -30.0
+    # -30 (L3 100k): forward 18.1 / 12.9 deg, term only ~-0.03 per step and flat -> -100.
+    hip_pitch_symmetry_reward_scale = -100.0
     # Per touchdown: scale * exp(-((lift - target) / sigma)^2).
     # 1.0 let the knee lift sink to 15-21 mm once the pelvis was held level (run 2026-09-25_09-25-22).
     knee_lift_reward_scale = 2.0
