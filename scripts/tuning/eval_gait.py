@@ -624,7 +624,9 @@ if __name__ == "__main__":
         import traceback
 
         traceback.print_exc()
+    finally:
+        # simulation_app.close() ends the process without flushing a redirected (block-buffered) stdout:
+        # the short standpush report was lost (10-28, log ended at env setup, exit 0)
         sys.stdout.flush()
         sys.stderr.flush()
-    finally:
         simulation_app.close()
