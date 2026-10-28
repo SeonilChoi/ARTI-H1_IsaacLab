@@ -188,11 +188,14 @@ class ArtiH1EventCfg:
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(10.0, 15.0),
+        interval_range_s=(4.0, 8.0),
         params={
             # Walking speed is only ~0.07 m/s, so the push has to stay small or it
             # swamps the velocity-tracking reward for a full averaging window.
-            "velocity_range": {"x": (-0.04, 0.04), "y": (-0.04, 0.04), "yaw": (-0.15, 0.15)},
+            # local push-robust run (10-28): was 0.04 m/s / yaw 0.15 every 10-15 s, no roll / pitch; the real robot
+            # rocked +-3 deg (sim +-0.6) and saturated after a -7.9 deg roll.
+            "velocity_range": {"x": (-0.10, 0.10), "y": (-0.10, 0.10), "yaw": (-0.2, 0.2),
+                               "roll": (-0.3, 0.3), "pitch": (-0.3, 0.3)},
         },
     )
 
