@@ -24,7 +24,7 @@ URDF = Path(__file__).resolve().parents[2] / "source/arti_h1/arti_h1/assets/mode
 POLICY = ["left_hip_yaw", "right_hip_yaw", "left_hip_roll", "right_hip_roll", "left_hip_pitch", "right_hip_pitch",
           "left_knee", "right_knee", "left_ankle_pitch", "right_ankle_pitch", "left_ankle_roll", "right_ankle_roll"]
 FOOT_OFFSET = np.array([-0.026, 0.0, -0.051])
-GAIT_PHASE_RATE = 1.12045
+GAIT_PHASE_RATE = 0.66667  # run35+ (arti_h1 slow gait); was 1.12045
 CONTROL_DT = 1.0 / 60.0
 GROUPS = {"root tan-norm": slice(0, 6), "ang vel": slice(6, 9), "joint tan-norm": slice(9, 81),
           "joint vel": slice(81, 93), "toes": slice(93, 99), "prev actions": slice(99, 111), "phase": slice(111, 113),

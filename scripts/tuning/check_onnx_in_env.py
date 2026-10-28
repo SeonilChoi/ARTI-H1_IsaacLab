@@ -28,6 +28,9 @@ parser.add_argument("--vel_noise", type=float, default=0.0, help="joint velocity
 parser.add_argument("--command", type=str, default="0.05,0,0", help="fixed command vx,vy,wz")
 parser.add_argument("--standstill", action="store_true", help="every env starts standing in the default pose (like the robot)")
 parser.add_argument("--start_phase", type=float, default=None, help="force the gait clock after reset (robot code starts at 0)")
+parser.add_argument("--imu_tilt", type=str, default=None,
+                    help="mount_range,walk_std (rad, rad/sqrt(s)) of the MTi-3 roll / pitch error, e.g. 0.02,0 = run35 training")
+parser.add_argument("--no_com_dr", action="store_true", help="disable the pelvis CoM randomization (runs before 10-28)")
 parser.add_argument("--save_obs_stats", type=str, default=None, help="npz with per-dim obs min / max / mean / std")
 parser.add_argument("--save_log", type=str, default=None,
                     help="write env 0 as a humanoid_controller runtime log (ARTI-H1 log_file format)")
@@ -58,6 +61,10 @@ if args_cli.standstill:
     cfg.reset_strategy = "default"
 if args_cli.save_log:
     cfg.use_isaac_imu_sensor = False  # the log's IMU columns are the true pelvis state, like an ideal IMU
+if args_cli.no_com_dr:
+    cfg.events.pelvis_com = None
+if args_cli.imu_tilt:
+    cfg.mti3_mount_tilt_range_rad, cfg.mti3_tilt_walk_std_rad_s = (float(v) for v in args_cli.imu_tilt.split(","))
 if args_cli.motion_folder:
     cfg.motion_folder_path = args_cli.motion_folder
 if args_cli.nominal_table:
@@ -89,6 +96,7 @@ POLICY_ORDER = ["left_hip_yaw", "right_hip_yaw", "left_hip_roll", "right_hip_rol
                 "left_knee", "right_knee", "left_ankle_pitch", "right_ankle_pitch", "left_ankle_roll", "right_ankle_roll"]
 steps = int(args_cli.seconds / uenv.step_dt)
 worst, worst_joint, n_fallen = 0.0, "", 0
+max_tilt = np.zeros(args_cli.num_envs)  # true pelvis tilt (deg), early termination is off
 names = uenv.robot.data.joint_names
 with torch.inference_mode():
     for k in range(steps):
@@ -119,6 +127,8 @@ with torch.inference_mode():
         if prev_actions is not None and k > 60:
             dact.append(np.abs(actions - prev_actions).mean()); jvel.append(uenv.robot.data.joint_vel.abs().mean().item())
         prev_actions = actions
+        gz = uenv.robot.data.projected_gravity_b[:, 2].clamp(-1.0, 1.0)
+        max_tilt = np.maximum(max_tilt, np.degrees(torch.acos(-gz).cpu().numpy()))
         # desired_joint_target = the target before the actuator model (delay / friction) touches it
         target = getattr(uenv, "desired_joint_target", uenv.robot.data.joint_pos_target).cpu().numpy()
         # Envs that just reset start a new episode and get a fresh target; skip their step.
@@ -133,6 +143,9 @@ print(f"[CHECK-ONNX] {steps} steps x {args_cli.num_envs} envs: max |env joint_po
       f" ({worst_joint}), terminations {n_fallen}")
 print(f"[CHECK-ONNX] jitter: mean |action(k) - action(k-1)| {np.mean(dact):.3f}, mean |joint vel| {np.mean(jvel):.2f} rad/s"
       f"  (hang={args_cli.hang} imu_yaw_flip={args_cli.imu_yaw_flip} vel_noise={args_cli.vel_noise})")
+print(f"[CHECK-ONNX] max true pelvis tilt: median {np.median(max_tilt):.1f} deg, envs > 15 deg {(max_tilt > 15).sum()}, "
+      f"> 45 deg (fallen) {(max_tilt > 45).sum()} / {args_cli.num_envs}  (imu mount {uenv.cfg.mti3_mount_tilt_range_rad} rad, "
+      f"walk {getattr(uenv.cfg, 'mti3_tilt_walk_std_rad_s', 0.0)} rad/sqrt(s))")
 if args_cli.save_obs_stats:
     o = np.concatenate(all_obs[60:])
     np.savez(args_cli.save_obs_stats, min=o.min(0), max=o.max(0), mean=o.mean(0), std=o.std(0))

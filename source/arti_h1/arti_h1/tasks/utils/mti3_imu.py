@@ -384,6 +384,15 @@ class Mti3ImuModel:
     def _apply_orientation_noise(self, orientation_quat_xyzw: torch.Tensor) -> torch.Tensor:
         roll_pitch_std = getattr(self.cfg, "mti3_roll_pitch_noise_std_rad", MTI3_ROLL_PITCH_NOISE_STD_RAD)
         yaw_std = getattr(self.cfg, "mti3_yaw_noise_std_rad", MTI3_YAW_NOISE_STD_RAD)
+        # slow drift of the filter's roll / pitch estimate (bounded random walk around the mounting error)
+        tilt_walk_std = getattr(self.cfg, "mti3_tilt_walk_std_rad_s", 0.0)
+        if tilt_walk_std > 0.0:
+            tilt_max = getattr(self.cfg, "mti3_tilt_max_rad", 0.08)
+            self.orientation_bias_rpy[:, :2] += (
+                torch.randn((self.num_envs, 2), dtype=torch.float32, device=self.device)
+                * tilt_walk_std * math.sqrt(self.step_dt)
+            )
+            self.orientation_bias_rpy[:, :2].clamp_(-tilt_max, tilt_max)
         rpy_noise = self.orientation_bias_rpy.clone()
         rpy_noise[:, :2] += torch.randn((self.num_envs, 2), dtype=torch.float32, device=self.device) * roll_pitch_std
         rpy_noise[:, 2] += torch.randn(self.num_envs, dtype=torch.float32, device=self.device) * yaw_std

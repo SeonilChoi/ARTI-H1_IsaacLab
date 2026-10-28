@@ -517,7 +517,13 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     mti3_gyro_bias_range_rad_s = (-0.01, 0.01)
     imu_gyro_extra_delay_steps = 1
     # run34: per-episode constant IMU roll / pitch mounting error (rad, +-); 0 = off.
-    mti3_mount_tilt_range_rad = 0.02
+    # 10-28 robot logs: standing IMU pitch differs from the leg FK pitch by -6.8 .. +4.7 deg between runs (was 0.02).
+    mti3_mount_tilt_range_rad = 0.05
+    # 10-28 robot logs: with the joints locked (observe run) the MTi-3 roll / pitch still drift 2-3 deg per minute, and
+    # during walking the IMU - FK pitch gap grew to 6-8 deg. Bounded random walk (rad/sqrt(s)) on top of the mount
+    # error; 0 = off.
+    mti3_tilt_walk_std_rad_s = 0.008
+    mti3_tilt_max_rad = 0.08
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 240,
         render_interval=decimation,
