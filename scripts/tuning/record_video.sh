@@ -7,6 +7,11 @@ cd "$(dirname "$0")/../.."
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) KIT_ARGS="--/renderer/vulkan=false --/app/vulkan=false" ;; *) KIT_ARGS="" ;; esac
 CKPT=$1; NAME=$2; shift 2  # remaining args (e.g. env.uniform_action_scale=0.6) are passed to play.py
 RUN_DIR=$(dirname "$(dirname "$CKPT")")
+# Windows, 10-29: after GPU resets a second CUDA process hangs at env start (10-20 GB RAM) while train.py runs.
+# Auto-loop videos are skipped then; manual videos are recorded with training paused.
+if [[ $NAME == auto_* && -z $RECORD_DURING_TRAINING ]] && [ -n "$KIT_ARGS" ] && powershell -NoProfile -Command     "if (Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | ? { \$_.CommandLine -match 'train.py' }) { exit 0 } else { exit 1 }"; then
+    echo "skip $NAME: train.py running (concurrent CUDA processes hang)"; exit 0
+fi
 mkdir -p logs/tuning/videos
 # One recording at a time: two Kit renderers at once segfault (10-15, auto loop + manual video).
 # One lock for all checkouts of the repo (main + worktrees): two Kit renderers at once hang / crash the GPU (10-29 TDR).
