@@ -17,7 +17,7 @@ import sys
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--mode", choices=["reference", "policy", "sequence"], required=True)
+parser.add_argument("--mode", choices=["reference", "policy", "sequence", "standpush"], required=True)
 parser.add_argument("--checkpoint", type=str, default=None)
 parser.add_argument("--num_envs", type=int, default=96)
 parser.add_argument("--seconds", type=float, default=14.0)
@@ -542,7 +542,78 @@ def main():
             over = t > avail
             print(f"[AK45] {jn:18s} time >40rpm {100*(v > w_rated).float().mean():5.2f}%  outside T-w line {100*over.float().mean():5.2f}%"
                   f"  worst excess {(t - avail).max():5.2f} Nm  torque when >40rpm max {t[v > w_rated].max() if (v > w_rated).any() else 0.0:5.2f} Nm")
+    if args_cli.mode == "standpush":
+        standpush(env, uenv, obs, dt)
     env.close()
+
+
+# --mode standpush: zero command, stand STANDPUSH_SETTLE_S, then one root velocity kick (heading frame) per env:
+# 4 directions x STANDPUSH_SPEEDS, num_envs / 16 envs each. Training push event off.
+STANDPUSH_SPEEDS = (0.10, 0.20, 0.30, 0.40)  # 0.05-0.20: no falls, no steps (L1 120k, server 300k)
+STANDPUSH_DIRS = (("front->back", (-1.0, 0.0)), ("back->front", (1.0, 0.0)), ("right->left", (0.0, 1.0)), ("left->right", (0.0, -1.0)))
+STANDPUSH_SETTLE_S, STANDPUSH_AFTER_S = 4.0, 5.0
+
+
+def standpush(env, uenv, obs, dt):
+    from isaaclab.utils.math import quat_apply, quat_apply_inverse, euler_xyz_from_quat, quat_from_euler_xyz
+    policy = load_policy(args_cli.checkpoint, uenv.device)
+    n, dev = uenv.num_envs, uenv.device
+    groups = [(d, v) for d in STANDPUSH_DIRS for v in STANDPUSH_SPEEDS]
+    gid = torch.arange(n, device=dev) % len(groups)
+    dv = torch.tensor([[v * d[1][0], v * d[1][1]] for d, v in groups], device=dev)[gid]
+    meter = StepMeter(uenv)
+    cmds = torch.zeros((n, 3), device=dev)
+    settle, after = int(STANDPUSH_SETTLE_S / dt), int(STANDPUSH_AFTER_S / dt)
+    fell = torch.zeros(n, dtype=torch.bool, device=dev)
+    tilt_max = torch.zeros(n, device=dev); disp = torch.zeros(n, device=dev)
+    lifted = torch.zeros(n, dtype=torch.bool, device=dev)
+    calm_since = torch.full((n,), -1, device=dev)  # first step index after which the pelvis stayed calm
+    up_z = torch.tensor([[0.0, 0.0, 1.0]], device=dev).expand(n, -1)
+    with torch.inference_mode():
+        for k in range(settle + after):
+            uenv.commands[:] = cmds
+            pobs = obs["policy"].clone()
+            pobs[:, -3:] = 0.0
+            ep_before = uenv.episode_length_buf.clone()
+            obs, _, _, _, _ = env.step(torch.clamp(policy(pobs), -1.0, 1.0))
+            if k < settle:
+                continue
+            d = uenv.robot.data
+            pq = d.body_quat_w[:, uenv.ref_body_index]
+            _, _, yaw = euler_xyz_from_quat(pq)
+            hq = quat_from_euler_xyz(torch.zeros_like(yaw), torch.zeros_like(yaw), yaw)
+            if k == settle:
+                ids = torch.arange(n, device=dev)
+                vel = torch.cat((d.root_com_lin_vel_w, d.root_com_ang_vel_w), dim=-1).clone()
+                kick = quat_apply(hq, torch.cat((dv, torch.zeros((n, 1), device=dev)), dim=-1))
+                vel[:, :2] += kick[:, :2]
+                uenv.robot.write_root_com_velocity_to_sim(vel, ids)
+                p0 = d.root_pos_w[:, :2].clone(); foot0 = meter.feet()[..., :2].clone()
+                continue
+            fell |= (uenv.episode_length_buf < ep_before) | (trunk_height(uenv) < 0.2)
+            up = quat_apply_inverse(hq, quat_apply(pq, up_z))
+            tilt = torch.rad2deg(torch.acos(torch.clamp(up[:, 2], -1.0, 1.0)))
+            tilt_max = torch.maximum(tilt_max, torch.where(fell, tilt_max, tilt))
+            rate = torch.rad2deg(quat_apply_inverse(hq, d.body_ang_vel_w[:, uenv.ref_body_index])[:, :2].norm(dim=-1))
+            calm = (tilt < 2.0) & (rate < 10.0)
+            calm_since = torch.where(calm, torch.where(calm_since < 0, torch.full_like(calm_since, k), calm_since), torch.full_like(calm_since, -1))
+            moved = (meter.feet()[..., :2] - foot0).norm(dim=-1).max(dim=-1).values
+            lifted |= (meter.feet()[..., 2] > 0.01).any(dim=-1) | (moved > 0.02)
+            disp = torch.where(fell, disp, (d.root_pos_w[:, :2] - p0).norm(dim=-1))
+    recover = torch.where(calm_since >= 0, (calm_since - settle).float() * dt, torch.full_like(tilt_max, float("nan")))
+    print(f"[STANDPUSH] checkpoint={args_cli.checkpoint} envs={n} (cmd 0, kick after {STANDPUSH_SETTLE_S:.0f} s, watch {STANDPUSH_AFTER_S:.0f} s)")
+    print("[STANDPUSH] direction      speed  fell   max tilt deg   recover s (tilt<2 deg, rate<10 deg/s)   stepped   pelvis disp mm")
+    for g, (dname, v) in enumerate(groups):
+        m = gid == g
+        ok = m & ~fell
+        rec = recover[ok]
+        rec_s = f"{torch.nanmean(rec):.2f}" if bool((~torch.isnan(rec)).any()) else "  -  "
+        unrec = int(torch.isnan(rec).sum())
+        print(f"[STANDPUSH] {dname[0]:12s} {v:5.2f}  {int(fell[m].sum())}/{int(m.sum())}"
+              f"   {tilt_max[ok].mean() if bool(ok.any()) else float('nan'):6.1f}"
+              f"         {rec_s} (not calm at end {unrec})"
+              f"                    {int(lifted[ok].sum())}/{int(ok.sum())}"
+              f"      {disp[ok].mean()*1000 if bool(ok.any()) else float('nan'):6.0f}")
 
 
 if __name__ == "__main__":
