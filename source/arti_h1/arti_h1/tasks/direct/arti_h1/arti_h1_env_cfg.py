@@ -195,7 +195,8 @@ class ArtiH1EventCfg:
             # local push-robust run (10-28): was 0.04 m/s / yaw 0.15 every 10-15 s, no roll / pitch; the real robot
             # rocked +-3 deg (sim +-0.6) and saturated after a -7.9 deg roll.
             # L2 (10-28): x +-0.10 -> +-0.20; standpush L1 240k toppled 4/4 at front->back 0.30 m/s, no sagittal steps.
-            "velocity_range": {"x": (-0.20, 0.20), "y": (-0.10, 0.10), "yaw": (-0.2, 0.2),
+            # L5 (10-29): x +-0.20 -> +-0.30; L4 360k still toppled at front->back 0.30 (2-4/4 over checks), above the trained range.
+            "velocity_range": {"x": (-0.30, 0.30), "y": (-0.10, 0.10), "yaw": (-0.2, 0.2),
                                "roll": (-0.3, 0.3), "pitch": (-0.3, 0.3)},
         },
     )
