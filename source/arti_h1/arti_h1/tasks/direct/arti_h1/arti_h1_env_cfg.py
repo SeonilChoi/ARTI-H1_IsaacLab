@@ -163,6 +163,17 @@ class ArtiH1EventCfg:
         },
     )
 
+    # The ankle roll holds ~6 Nm all the time (CoM 57 mm off the stance foot), so a CoM error matters on the real
+    # robot. Pelvis is half the mass: +-2 cm on its CoM moves the whole-robot CoM by ~+-1 cm.
+    pelvis_com = EventTerm(
+        func=mdp.randomize_rigid_body_com,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="pelvis"),
+            "com_range": {"x": (-0.02, 0.02), "y": (-0.02, 0.02), "z": (-0.02, 0.02)},
+        },
+    )
+
     actuator_gains = EventTerm(
         func=mdp.randomize_actuator_gains,
         mode="startup",
