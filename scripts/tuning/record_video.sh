@@ -9,7 +9,8 @@ CKPT=$1; NAME=$2; shift 2  # remaining args (e.g. env.uniform_action_scale=0.6) 
 RUN_DIR=$(dirname "$(dirname "$CKPT")")
 mkdir -p logs/tuning/videos
 # One recording at a time: two Kit renderers at once segfault (10-15, auto loop + manual video).
-LOCK=${VIDEO_LOCK:-logs/tuning/videos/.record.lock}  # shared with other checkouts via VIDEO_LOCK
+# One lock for all checkouts of the repo (main + worktrees): two Kit renderers at once hang / crash the GPU (10-29 TDR).
+LOCK=${VIDEO_LOCK:-$(git rev-parse --path-format=absolute --git-common-dir)/../logs/tuning/videos/.record.lock}
 for _ in $(seq 360); do mkdir "$LOCK" 2>/dev/null && break; sleep 10; done
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT
 rm -rf "$RUN_DIR/videos/play"
