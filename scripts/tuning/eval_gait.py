@@ -31,6 +31,8 @@ parser.add_argument("--motion_folder", type=str, default=None, help="reference m
 parser.add_argument("--nominal_table", type=str, default=None, help="nominal gait table the checkpoint was trained with")
 parser.add_argument("--push", choices=["cfg", "old"], default="cfg", help="sequence pushes: cfg values, or the pre-10-28 weak pushes (0.04 m/s every 10-15 s)")
 parser.add_argument("--imu_obs_delay", type=int, default=0, help="extra control steps of delay on the policy's IMU obs (0:9 tilt + gyro), on top of training's")
+parser.add_argument("--blind_imu", action="store_true", help="policy IMU obs 0:9 held at 0, as the robot's --blind-imu test")
+parser.add_argument("--obs_scale", nargs="*", default=[], help="idx=factor on policy obs (convention-mismatch probe, e.g. 7=-1 flips gyro_y)")
 parser.add_argument("--cfg", nargs="*", default=[], help="env cfg overrides for sensitivity probes: dotted.path=python_literal")
 parser.add_argument("--hip_roll_limit", type=float, default=None, help="hard +-limit (rad) on hip_roll, as in training")
 AppLauncher.add_app_launcher_args(parser)
@@ -378,6 +380,18 @@ def load_policy(path, device):
     actor = nn.Sequential(*layers).to(device).eval()
     pre = ck.get("observation_preprocessor") or ck.get("state_preprocessor")
     scaler = Scaler({k: v.to(device) for k, v in pre.items()}) if pre else nn.Identity()
+    if args_cli.obs_scale:
+        scale = torch.ones(sd[f"net_container.{idx[0]}.weight"].shape[1], device=device)
+        for item in args_cli.obs_scale:
+            i, f = item.split("=")
+            scale[int(i)] = float(f)
+        return lambda obs: actor(scaler(obs * scale))
+    if args_cli.blind_imu:
+        def blind(obs):
+            obs = obs.clone()
+            obs[:, :9] = 0.0
+            return actor(scaler(obs))
+        return blind
     if args_cli.imu_obs_delay <= 0:
         return lambda obs: actor(scaler(obs))
     # Robot-latency probe (10-29): feed the IMU part of the obs from imu_obs_delay control steps ago.
@@ -565,7 +579,7 @@ def main():
                     seg_tilt.append(((meter.tilt_sum / sn).mean(0).tolist(), (meter.corner_sum / sn).mean(0).tolist(),
                                      (meter.edge_drag / max(meter.n, 1)).mean(0).tolist()))
         fell = min_h < 0.2
-        print(f"[EVAL-SEQ] checkpoint={args_cli.checkpoint} envs={uenv.num_envs} imu_obs_delay={args_cli.imu_obs_delay} fell={int(fell.sum())}")
+        print(f"[EVAL-SEQ] checkpoint={args_cli.checkpoint} envs={uenv.num_envs} imu_obs_delay={args_cli.imu_obs_delay} blind_imu={args_cli.blind_imu} fell={int(fell.sum())}")
         for j, (name, c) in enumerate(PLAY_SEQUENCE):
             v = (seg_vel[j] / max(seg_n[j], 1))[~fell].mean(0).tolist()
             (ls, ln), (rs, rn) = seg_steps_lr[j]
