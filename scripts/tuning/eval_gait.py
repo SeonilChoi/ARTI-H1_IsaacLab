@@ -257,6 +257,21 @@ def print_tracking(tag, names, esq, n, mask=None):
     print(f"       TRACK err rms deg L/R [{tag}]: " + " | ".join(parts))
 
 
+def print_lag(tag, names, des, q, dt, mask, max_shift=7):
+    """Lag = shift of q (0..max_shift control steps) that minimises rms(des[t] - q[t + s]); same metric as the robot logs."""
+    des, q = des[:, mask], q[:, mask]
+    rms = torch.stack([torch.rad2deg(torch.sqrt(((des[: len(des) - s] - q[s:]) ** 2).mean(dim=(0, 1)))) for s in range(max_shift + 1)])
+    best = rms.argmin(0)
+    parts = []
+    for jn in ROM_JOINTS:
+        for side in ("left_", "right_"):
+            i = [k for k, x in enumerate(names) if x.startswith(side) and x.endswith(jn)]
+            if i:
+                i = i[0]
+                parts.append(f"{jn}{side[0].upper()} {rms[0, i]:.2f}->{rms[best[i], i]:.2f}@{best[i].item() * dt * 1000:.0f}ms")
+    print(f"       LAG rms(lag 0)->rms(best lag)@lag [{tag}]: " + " | ".join(parts))
+
+
 def print_torque(tag, names, tsq, pw, n, mask=None):
     """Per-joint torque rms (Nm) L/R and mean total mechanical power sum|tau*qd| (W)."""
     tr = torch.sqrt(tsq / max(n, 1))
@@ -473,6 +488,7 @@ def main():
         seg_rom = []
         seg_torque = []
         seg_track = []
+        lag_des, lag_q = [], []  # forward segment, per control step: target vs measured, for the lag metric
         all_tau, all_vel = [], []  # |tau|, |qd| per measured step, for motor sizing (p99 / max)
         seg_feet = []
         seg_tilt = []
@@ -506,6 +522,8 @@ def main():
                     jmin = torch.minimum(jmin, d.joint_pos); jmax = torch.maximum(jmax, d.joint_pos)
                     vsq += d.joint_vel ** 2; nr += 1
                     esq += (uenv.desired_joint_target - d.joint_pos) ** 2
+                    if j == 0:
+                        lag_des.append(uenv.desired_joint_target.clone()); lag_q.append(d.joint_pos.clone())
                     accumulate_torque(uenv, tsq, pw)
                     all_tau.append(uenv.robot.data.applied_torque.abs().clone()); all_vel.append(d.joint_vel.abs().clone())
                     def yaw_of(q):
@@ -549,6 +567,8 @@ def main():
             print_rom(name, uenv.robot.data.joint_names, *seg_rom[j], ~fell)
             print_torque(name, uenv.robot.data.joint_names, *seg_torque[j], ~fell)
             print_tracking(name, uenv.robot.data.joint_names, *seg_track[j], ~fell)
+            if j == 0:
+                print_lag(name, uenv.robot.data.joint_names, torch.stack(lag_des), torch.stack(lag_q), dt, ~fell)
             jn = uenv.robot.data.joint_names; jm = (seg_joint[j] / max(seg_n[j], 1)).tolist()
             fy = (seg_footyaw[j] / max(seg_n[j], 1)).tolist()
             print(f"       hip_yaw mean L {jm[jn.index('left_hip_yaw')]:+.4f} R {jm[jn.index('right_hip_yaw')]:+.4f} rad | "
