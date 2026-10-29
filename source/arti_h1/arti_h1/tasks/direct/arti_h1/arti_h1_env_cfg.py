@@ -140,7 +140,8 @@ class ArtiH1EventCfg:
         func=mdp.randomize_rigid_body_material,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            # L6: soles excluded, their friction comes with the per-env compliance material (sole_friction).
+            "asset_cfg": SceneEntityCfg("robot", body_names="^(?!.*foot_link$).*"),
             # Combined with the plane's 1.0 via "average" -> effective 0.7..1.2.
             "static_friction_range": (0.4, 1.4),
             "dynamic_friction_range": (0.3, 1.2),
@@ -569,10 +570,6 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
             static_friction=1.0,
             dynamic_friction=1.0,
             restitution=0.0,
-            # L6 (10-29): soft ground/sole. Rigid contact gave 1/4 of the real walking pitch rate; 2e4 N/m (~5 mm static
-            # sink) + real-like actuator lag reproduced it. Global (one plane), not randomised.
-            compliant_contact_stiffness=20000.0,
-            compliant_contact_damping=200.0,
         ),
         debug_vis=False,
     )
@@ -580,11 +577,20 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
         num_envs=4096,
         env_spacing=1.0,
-        replicate_physics=True,
+        replicate_physics=False,  # L6: per-env sole materials (sole_compliance)
         clone_in_fabric=False,
     )
 
     events: ArtiH1EventCfg = ArtiH1EventCfg()
+
+    # L6 (10-29): per-env sole contact compliance buckets (stiffness N/m, damping Ns/m; 0 = rigid), env i -> i % K.
+    # The current robot has rigid PLA soles on a hard floor; urethane foam soles are planned. A soft contact
+    # (2e4 N/m) plus real-like actuator lag was needed in sim to reach the real walking pitch rate.
+    sole_compliance = [(0.0, 0.0), (1.0e5, 500.0), (4.0e4, 300.0), (2.0e4, 200.0)]
+    sole_bodies = ("left_foot_link", "right_foot_link")
+    # Sole friction buckets (static, dynamic) replacing the startup friction DR on the feet; same span as before
+    # (0.4-1.4 / 0.3-1.2, averaged with the floor's 1.0).
+    sole_friction = [(0.4, 0.3), (0.73, 0.6), (1.07, 0.9), (1.4, 1.2)]
 
     dt = 1 / 240 * 4
     motion_folder_path = os.path.join(ISAACLAB_ASSETS_DIR, "motions", "arti_h1")

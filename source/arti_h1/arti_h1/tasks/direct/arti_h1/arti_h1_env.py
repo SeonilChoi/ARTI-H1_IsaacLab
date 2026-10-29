@@ -290,6 +290,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
 
         self.scene.clone_environments(copy_from_source=False)
+        self._bind_sole_compliance()
         if self.device == "cpu":
             self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
 
@@ -301,6 +302,40 @@ class ArtiH1AmpEnv(DirectRLEnv):
 
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
+
+    def _bind_sole_compliance(self):
+        """Per-env sole material: env i gets compliance cfg.sole_compliance[i % K] (stiffness N/m, damping Ns/m;
+        stiffness 0 = rigid) and friction cfg.sole_friction[(i // K) % F] (static, dynamic). Needs
+        replicate_physics=False so each env keeps its own USD material binding. The startup friction DR event
+        (randomize_rigid_body_material) replaces shape materials and drops compliance, so it must skip the soles."""
+        stiff, fric = self.cfg.sole_compliance, self.cfg.sole_friction or [(1.0, 1.0)]
+        if not stiff:
+            return
+        buckets = [(s, f) for f in fric for s in stiff]  # index = (i // K) % F * K + i % K = i % (K * F)
+        for k, ((stiffness, damping), (mu_s, mu_d)) in enumerate(buckets):
+            material = sim_utils.RigidBodyMaterialCfg(
+                static_friction=mu_s, dynamic_friction=mu_d, restitution=0.0,
+                friction_combine_mode="average", restitution_combine_mode="average",
+                compliant_contact_stiffness=stiffness, compliant_contact_damping=damping,
+            )
+            material.func(f"/World/Materials/sole_{k}", material)
+        from pxr import UsdShade
+
+        # The robot's collision prims are instanced (no per-instance edits below them), so the binding goes on the
+        # instance root "<body>/collisions" with strongerThanDescendants; the shapes inside inherit it.
+        stage = self.sim.stage
+        materials = [UsdShade.Material(stage.GetPrimAtPath(f"/World/Materials/sole_{k}")) for k in range(len(buckets))]
+        bound = 0
+        for i in range(self.scene.cfg.num_envs):
+            for body in self.cfg.sole_bodies:
+                prim = stage.GetPrimAtPath(f"/World/envs/env_{i}/Robot/{body}/collisions")
+                if prim.IsValid():
+                    UsdShade.MaterialBindingAPI.Apply(prim).Bind(
+                        materials[i % len(buckets)], UsdShade.Tokens.strongerThanDescendants, "physics"
+                    )
+                    bound += 1
+        print(f"[INFO] sole compliance: {buckets} -> {bound} foot collision roots bound "
+              f"({bound / self.scene.cfg.num_envs:.0f} per env)", flush=True)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.previous_actions.copy_(self.actions)
