@@ -369,6 +369,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
         sim_dt = self.cfg.sim.dt
         lo, hi = self.cfg.actuator_delay_jitter_ms
         delay_ms = per_joint(self.cfg.actuator_delay_ms)[None, :] + torch.empty(n, 1, device=self.device).uniform_(lo, hi)
+        # Per-env, per-joint-type extra delay uniform(0, extra) on top (both legs share the sample).
+        extra = {k: self.cfg.actuator_delay_extra_ms.get(k, 0.0) for k in self.cfg.actuator_delay_ms}
+        types = sorted(extra)
+        draw = torch.rand(n, len(types), device=self.device) * torch.tensor([extra[k] for k in types], device=self.device)
+        delay_ms = delay_ms + draw[:, [types.index(nm.split("_", 1)[1]) for nm in names]]
         self.actuator_delay_steps = torch.clamp(torch.round(delay_ms.clamp_min(0.0) / 1000.0 / sim_dt), min=0).long()
         self.actuator_buffer = torch.zeros(int(self.actuator_delay_steps.max().item()) + 1, n, len(names), device=self.device)
         self.actuator_buffer_head = 0

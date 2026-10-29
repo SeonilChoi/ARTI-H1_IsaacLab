@@ -257,6 +257,10 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # run32: wider towards a faster / less damped joint (the real ankles reacted ~2x faster than the sim on the
     # first steps of the 10-24 robot walk).
     actuator_delay_jitter_ms = (-8.0, 5.0)
+    # L6 (10-29): real walk logs lag q_des by ~33 ms more on ankle_pitch and up to ~50-70 ms more on hip_roll (hip_roll
+    # poorly constrained: mostly friction). Per-env extra uniform(0, x) ms per joint type; sim pitch-rate only reached the
+    # real 0.43 rad/s with this lag plus a compliant ground (eval_exp2_300k_sens_*).
+    actuator_delay_extra_ms = {"hip_roll": 50.0, "ankle_pitch": 25.0}
     actuator_armature_scale_range = (0.3, 1.3)
     actuator_coulomb_scale_range = (0.3, 1.5)
     # Gaussian noise (rad/s) on the policy joint velocity obs [81:93]; 0 = off (run31 and before).
@@ -565,6 +569,10 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
             static_friction=1.0,
             dynamic_friction=1.0,
             restitution=0.0,
+            # L6 (10-29): soft ground/sole. Rigid contact gave 1/4 of the real walking pitch rate; 2e4 N/m (~5 mm static
+            # sink) + real-like actuator lag reproduced it. Global (one plane), not randomised.
+            compliant_contact_stiffness=20000.0,
+            compliant_contact_damping=200.0,
         ),
         debug_vis=False,
     )
