@@ -29,6 +29,7 @@ parser.add_argument("--uniform_action_scale", type=float, default=0.6, help="mus
 parser.add_argument("--motion_folder", type=str, default=None, help="reference motion set the checkpoint was trained on")
 parser.add_argument("--nominal_table", type=str, default=None, help="nominal gait table the checkpoint was trained with")
 parser.add_argument("--push", choices=["cfg", "old"], default="cfg", help="sequence pushes: cfg values, or the pre-10-28 weak pushes (0.04 m/s every 10-15 s)")
+parser.add_argument("--imu_obs_delay", type=int, default=0, help="extra control steps of delay on the policy's IMU obs (0:9 tilt + gyro), on top of training's")
 parser.add_argument("--hip_roll_limit", type=float, default=None, help="hard +-limit (rad) on hip_roll, as in training")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -335,7 +336,20 @@ def load_policy(path, device):
     actor = nn.Sequential(*layers).to(device).eval()
     pre = ck.get("observation_preprocessor") or ck.get("state_preprocessor")
     scaler = Scaler({k: v.to(device) for k, v in pre.items()}) if pre else nn.Identity()
-    return lambda obs: actor(scaler(obs))
+    if args_cli.imu_obs_delay <= 0:
+        return lambda obs: actor(scaler(obs))
+    # Robot-latency probe (10-29): feed the IMU part of the obs from imu_obs_delay control steps ago.
+    hist = []
+
+    def delayed(obs):
+        hist.append(obs[:, :9].clone())
+        if len(hist) > args_cli.imu_obs_delay + 1:
+            hist.pop(0)
+        obs = obs.clone()
+        obs[:, :9] = hist[0]
+        return actor(scaler(obs))
+
+    return delayed
 
 
 def main():
@@ -502,7 +516,7 @@ def main():
                     seg_tilt.append(((meter.tilt_sum / sn).mean(0).tolist(), (meter.corner_sum / sn).mean(0).tolist(),
                                      (meter.edge_drag / max(meter.n, 1)).mean(0).tolist()))
         fell = min_h < 0.2
-        print(f"[EVAL-SEQ] checkpoint={args_cli.checkpoint} envs={uenv.num_envs} fell={int(fell.sum())}")
+        print(f"[EVAL-SEQ] checkpoint={args_cli.checkpoint} envs={uenv.num_envs} imu_obs_delay={args_cli.imu_obs_delay} fell={int(fell.sum())}")
         for j, (name, c) in enumerate(PLAY_SEQUENCE):
             v = (seg_vel[j] / max(seg_n[j], 1))[~fell].mean(0).tolist()
             (ls, ln), (rs, rn) = seg_steps_lr[j]
