@@ -12,6 +12,7 @@
 """
 
 import argparse
+import ast
 import sys
 
 from isaaclab.app import AppLauncher
@@ -30,6 +31,7 @@ parser.add_argument("--motion_folder", type=str, default=None, help="reference m
 parser.add_argument("--nominal_table", type=str, default=None, help="nominal gait table the checkpoint was trained with")
 parser.add_argument("--push", choices=["cfg", "old"], default="cfg", help="sequence pushes: cfg values, or the pre-10-28 weak pushes (0.04 m/s every 10-15 s)")
 parser.add_argument("--imu_obs_delay", type=int, default=0, help="extra control steps of delay on the policy's IMU obs (0:9 tilt + gyro), on top of training's")
+parser.add_argument("--cfg", nargs="*", default=[], help="env cfg overrides for sensitivity probes: dotted.path=python_literal")
 parser.add_argument("--hip_roll_limit", type=float, default=None, help="hard +-limit (rad) on hip_roll, as in training")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -207,6 +209,18 @@ def make_env():
         cfg.nominal_gait_table_file = args_cli.nominal_table
     if args_cli.hip_roll_limit:
         cfg.hip_roll_limit = args_cli.hip_roll_limit
+    for item in args_cli.cfg:
+        key, value = item.split("=", 1)
+        *path, leaf = key.split(".")
+        obj = cfg
+        for name in path:
+            obj = obj[name] if isinstance(obj, dict) else getattr(obj, name)
+        value = ast.literal_eval(value)
+        if isinstance(obj, dict):
+            obj[leaf] = value
+        else:
+            setattr(obj, leaf, value)
+        print(f"[EVAL] cfg override {key} = {value}")
     if hasattr(cfg, "command_resample_interval_s"):
         cfg.command_resample_interval_s = (0.0, 0.0)  # the eval drives the commands itself
     cfg.episode_length_s = args_cli.seconds + 5.0
