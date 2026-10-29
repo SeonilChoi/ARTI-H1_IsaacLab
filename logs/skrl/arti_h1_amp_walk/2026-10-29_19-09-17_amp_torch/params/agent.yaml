@@ -1,0 +1,95 @@
+seed: 42
+models:
+  separate: true
+  policy:
+    class: GaussianMixin
+    clip_actions: false
+    clip_log_std: true
+    min_log_std: -2.5
+    max_log_std: 2.0
+    initial_log_std: -1.5
+    fixed_log_std: false
+    network:
+    - name: net
+      input: OBSERVATIONS
+      layers:
+      - 1024
+      - 512
+      activations: relu
+    output: ACTIONS
+  value:
+    class: DeterministicMixin
+    clip_actions: false
+    network:
+    - name: net
+      input: STATES
+      layers:
+      - 1024
+      - 512
+      activations: relu
+    output: ONE
+  discriminator:
+    class: DeterministicMixin
+    clip_actions: false
+    network:
+    - name: net
+      input: OBSERVATIONS
+      layers:
+      - 1024
+      - 512
+      activations: relu
+    output: ONE
+memory:
+  class: RandomMemory
+  memory_size: -1
+motion_dataset:
+  class: RandomMemory
+  memory_size: 200000
+reply_buffer:
+  class: RandomMemory
+  memory_size: 500000
+agent:
+  class: AMP
+  rollouts: 48
+  learning_epochs: 3
+  mini_batches: 3
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  learning_rate: 5.0e-05
+  learning_rate_scheduler: KLAdaptiveLR
+  learning_rate_scheduler_kwargs:
+    kl_threshold: 0.016
+  observation_preprocessor: RunningStandardScaler
+  observation_preprocessor_kwargs: null
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  value_preprocessor: RunningStandardScaler
+  value_preprocessor_kwargs: null
+  amp_observation_preprocessor: RunningStandardScaler
+  amp_observation_preprocessor_kwargs: null
+  random_timesteps: 0
+  learning_starts: 0
+  grad_norm_clip: 1.0
+  ratio_clip: 0.2
+  value_clip: 0.2
+  entropy_loss_scale: 0.001
+  value_loss_scale: 2.5
+  discriminator_loss_scale: 5.0
+  amp_batch_size: 256
+  task_reward_scale: 0.3
+  style_reward_scale: 0.7
+  discriminator_batch_size: 4096
+  discriminator_logit_regularization_scale: 0.05
+  discriminator_gradient_penalty_scale: 5.0
+  discriminator_weight_decay_scale: 0.0001
+  time_limit_bootstrap: false
+  experiment:
+    directory: C:\projects\arti_h1_local\logs\skrl\arti_h1_amp_walk
+    experiment_name: 2026-10-29_19-09-17_amp_torch
+    write_interval: 1000
+    checkpoint_interval: 20000
+trainer:
+  class: SequentialTrainer
+  timesteps: 4800000
+  environment_info: log
+  close_environment_at_exit: false
