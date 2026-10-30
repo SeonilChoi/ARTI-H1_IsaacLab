@@ -8,7 +8,7 @@
 The YAML has the same layout as humanoid_controller/config/*.yaml: joint_targets[i] (rad, Isaac joint order) is what
 example_action sends to the motors at dt; observations[i] is the 116-dim policy observation of that step.
 
-    python scripts/replay_demo.py --motion_set arti_h1 --index 292 --output logs/replay_demo/292.yaml --headless
+    python scripts/replay_demo.py --motion_set arti_h1 --index 292 --output logs/replay_demo/292.yaml
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -31,6 +31,11 @@ parser.add_argument("--no_realtime", action="store_true", help="Do not sleep to 
 parser.add_argument("--video", type=str, default=None, help="Also save an mp4 of the replay (play.py camera), e.g. logs/tuning/videos/x.mp4")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
+
+if args_cli.video:
+    # Isaac Lab 3.x: render_mode="rgb_array" frames were removed (env.render() returns None); recording goes through
+    # VideoRecorderCfg sources resolved by isaaclab.app.launch_simulation, which this AppLauncher script does not use.
+    raise SystemExit("--video is not available in the Isaac Lab 3.x port of replay_demo.py (see PORTING_NOTES.md)")
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -107,21 +112,22 @@ def _write_motion_state(replay_env, motion_time: float, env_ids: torch.Tensor):
         return_full_state=True,
     )
 
-    root_state = replay_env.robot.data.default_root_state[env_ids].clone()
+    root_state = replay_env._default_root_state(env_ids)
     root_state[:, :3] = root_position + replay_env.scene.env_origins[env_ids]
-    root_state[:, 3:7] = root_orientation_quat_xyzw[:, [3, 0, 1, 2]]
+    root_state[:, 3:7] = root_orientation_quat_xyzw  # Isaac Lab 3.x quaternions are (x, y, z, w)
     root_state[:, 7:10] = root_linear_velocity
     root_state[:, 10:13] = root_angular_velocity
 
-    replay_env.robot.write_root_link_pose_to_sim(root_state[:, :7], env_ids)
-    replay_env.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
-    replay_env.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+    replay_env.robot.write_root_link_pose_to_sim_index(root_pose=root_state[:, :7], env_ids=env_ids)
+    replay_env.robot.write_root_com_velocity_to_sim_index(root_velocity=root_state[:, 7:], env_ids=env_ids)
+    replay_env.robot.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+    replay_env.robot.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
     return joint_pos
 
 
 def _joint_pos_to_actions(replay_env, joint_pos: torch.Tensor) -> torch.Tensor:
     """Invert the env's action mapping: target = default_joint_pos + scale * action."""
-    delta = joint_pos - replay_env.robot.data.default_joint_pos
+    delta = joint_pos - replay_env.robot.data.default_joint_pos.torch
     action_scale = torch.where(delta >= 0.0, replay_env.action_positive_scale, replay_env.action_negative_scale)
     return delta / action_scale
 
@@ -216,14 +222,13 @@ def main():
     recorded_actions: list[list[float]] = []
     recorded_joint_targets: list[list[float]] = []
     recorded_observations: list[list[float]] = []
-    video_frames: list[np.ndarray] = []
     with tempfile.TemporaryDirectory(prefix="arti_h1_replay_") as motion_dir:
         replay_motion_path = Path(motion_dir) / motion_path.name
         shutil.copy2(motion_path, replay_motion_path)
 
         try:
             env_cfg = _configure_replay_env(motion_dir)
-            env = gym.make(TASK_NAME, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+            env = gym.make(TASK_NAME, cfg=env_cfg)
             replay_env = env.unwrapped
             replay_env.motion_loader._cycle_motion = args_cli.loop
 
@@ -250,12 +255,8 @@ def main():
                     # Step with the recovered actions so the joint position targets follow the motion.
                     obs, _, _, _, _ = env.step(actions)
                     recorded_actions.append(_to_list(actions[0]))
-                    recorded_joint_targets.append(_to_list(replay_env.robot.data.joint_pos_target[0]))
+                    recorded_joint_targets.append(_to_list(replay_env.robot.actuators.target_command.position.torch[0]))
                     recorded_observations.append(_to_list(obs["policy"][0]))
-                    if args_cli.video:
-                        frame = env.render()
-                        if frame is not None and frame.size:
-                            video_frames.append(np.asarray(frame)[..., :3].copy())
 
                 motion_time += replay_env.step_dt
                 if args_cli.loop:
@@ -274,16 +275,6 @@ def main():
                     recorded_joint_targets,
                     recorded_observations,
                 )
-            if args_cli.video and video_frames:
-                import cv2
-
-                Path(args_cli.video).parent.mkdir(parents=True, exist_ok=True)
-                h, w = video_frames[0].shape[:2]
-                out = cv2.VideoWriter(args_cli.video, cv2.VideoWriter_fourcc(*"mp4v"), round(1.0 / replay_env.step_dt), (w, h))
-                for frame in video_frames:
-                    out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-                out.release()
-                print(f"[INFO] Saved {len(video_frames)} frames to {args_cli.video}")
             if env is not None:
                 env.close()
 

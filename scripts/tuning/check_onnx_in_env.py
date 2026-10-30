@@ -3,7 +3,7 @@
 This is the deployment check for humanoid_controller: the robot sends ONNX q_des straight to the motors and feeds
 the ONNX 'actions' output back as previous_actions, so q_des must equal robot.data.joint_pos_target every step.
 
-    python -u scripts/tuning/check_onnx_in_env.py --onnx <policy.onnx> --headless \
+    python -u scripts/tuning/check_onnx_in_env.py --onnx <policy.onnx> \
         --motion_folder .../arti_h1 --nominal_table .../arti_h1_nominal_gait_command.npy --hip_roll_limit 0.2618
 """
 import argparse
@@ -44,6 +44,7 @@ import torch  # noqa: E402
 
 import isaaclab_tasks  # noqa: F401,E402
 from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
+from isaaclab.utils.math import quat_apply_inverse  # noqa: E402
 
 import arti_h1.tasks  # noqa: F401,E402
 
@@ -56,7 +57,7 @@ cfg.uniform_action_scale = 0.0
 cfg.events.push_robot = None
 cfg.command_resample_interval_s = (1e9, 1e9)
 if args_cli.hang:
-    cfg.robot.spawn.articulation_props.fix_root_link = True
+    cfg.scene.robot.spawn.fix_root_link = True  # 3.x: spawner-level flag
 if args_cli.standstill:
     cfg.reset_strategy = "default"
 if args_cli.save_log:
@@ -78,15 +79,15 @@ sess = ort.InferenceSession(args_cli.onnx, providers=["CPUExecutionProvider"])
 obs, _ = env.reset()
 cmd = torch.tensor([float(v) for v in args_cli.command.split(",")], device=uenv.device)
 if args_cli.hang:
-    root = uenv.robot.data.default_root_state.clone()
+    root = uenv._default_root_state(torch.arange(uenv.num_envs, device=uenv.device))
     root[:, :3] = uenv.scene.env_origins + torch.tensor([0.0, 0.0, 0.6], device=uenv.device)
     if args_cli.hang_tilt:
         import math
         r_deg, p_deg = (float(v) for v in args_cli.hang_tilt.split(","))
         cr, sr = math.cos(math.radians(r_deg) / 2), math.sin(math.radians(r_deg) / 2)
         cp, sp = math.cos(math.radians(p_deg) / 2), math.sin(math.radians(p_deg) / 2)
-        root[:, 3:7] = torch.tensor([cr * cp, sr * cp, cr * sp, -sr * sp], device=uenv.device)  # wxyz, R = Rx(roll) Ry(pitch)
-    uenv.robot.write_root_pose_to_sim(root[:, :7])
+        root[:, 3:7] = torch.tensor([sr * cp, cr * sp, -sr * sp, cr * cp], device=uenv.device)  # xyzw, R = Rx(roll) Ry(pitch)
+    uenv.robot.write_root_pose_to_sim_index(root_pose=root[:, :7])
 if args_cli.start_phase is not None:
     uenv.gait_phase[:] = args_cli.start_phase
     obs = {"policy": uenv._get_observations()["policy"]}
@@ -116,21 +117,23 @@ with torch.inference_mode():
             d = uenv.robot.data
             jn = list(d.joint_names)
             idx = [jn.index(n) for n in POLICY_ORDER]
-            qwxyz = d.body_quat_w[0, uenv.ref_body_index].cpu().numpy()
-            gyro_b = d.body_ang_vel_b[0, uenv.ref_body_index].cpu().numpy() if hasattr(d, "body_ang_vel_b") else np.zeros(3)
+            q_xyzw = d.body_quat_w.torch[0:1, uenv.ref_body_index]
+            qwxyz = q_xyzw[0, [3, 0, 1, 2]].cpu().numpy()  # log keeps w, x, y, z
+            # pelvis angular velocity in the pelvis frame (3.x data has no body_ang_vel_b)
+            gyro_b = quat_apply_inverse(q_xyzw, d.body_ang_vel_w.torch[0:1, uenv.ref_body_index])[0].cpu().numpy()
             phase_obs = float(np.mod(np.arctan2(pobs[0, -5], pobs[0, -4]) / (2 * np.pi), 1.0))
             log_rows.append([k * uenv.step_dt, phase_obs] + pobs[0].tolist() + outs[0][1][0].tolist() + outs[0][0][0].tolist()
-                            + sum([[d.joint_pos[0, i].item(), d.joint_vel[0, i].item(), d.applied_torque[0, i].item(), 30.0]
+                            + sum([[d.joint_pos.torch[0, i].item(), d.joint_vel.torch[0, i].item(), uenv.robot.actuators.applied_effort.torch[0, i].item(), 30.0]
                                    for i in idx], []) + qwxyz.tolist() + gyro_b.tolist())
         actions = np.concatenate([o[0] for o in outs]); q_des = np.concatenate([o[1] for o in outs])
         obs, _, terminated, truncated, _ = env.step(torch.from_numpy(actions).to(uenv.device))
         if prev_actions is not None and k > 60:
-            dact.append(np.abs(actions - prev_actions).mean()); jvel.append(uenv.robot.data.joint_vel.abs().mean().item())
+            dact.append(np.abs(actions - prev_actions).mean()); jvel.append(uenv.robot.data.joint_vel.torch.abs().mean().item())
         prev_actions = actions
-        gz = uenv.robot.data.projected_gravity_b[:, 2].clamp(-1.0, 1.0)
+        gz = uenv.robot.data.projected_gravity_b.torch[:, 2].clamp(-1.0, 1.0)
         max_tilt = np.maximum(max_tilt, np.degrees(torch.acos(-gz).cpu().numpy()))
         # desired_joint_target = the target before the actuator model (delay / friction) touches it
-        target = getattr(uenv, "desired_joint_target", uenv.robot.data.joint_pos_target).cpu().numpy()
+        target = getattr(uenv, "desired_joint_target", uenv.robot.actuators.target_command.position.torch).cpu().numpy()
         # Envs that just reset start a new episode and get a fresh target; skip their step.
         live = ~(terminated | truncated).cpu().numpy()
         n_fallen += int((terminated & ~truncated).sum().item())

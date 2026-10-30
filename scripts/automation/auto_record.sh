@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local PC (Windows Task Scheduler, see README.md): record every checkpoint the AWS server pushed to
+# Local PC (scheduler, see README.md): record every checkpoint the AWS server pushed to
 # arti-training-results.   bash scripts/automation/auto_record.sh
 # Each new <robot>/<run>/checkpoints/agent_N.pt is downloaded on its own (LFS bandwidth), copied with its params to
 # logs/remote/<robot>/<run>/ and recorded by record_video.sh to logs/tuning/videos/aws_<run>_<N>.mp4.
@@ -9,7 +9,7 @@ cd "$(dirname "$0")/../.."
 ROBOT=arti_h1
 RESULTS_DIR=${RESULTS_DIR:-../arti-training-results}
 RESULTS_URL=https://github.com/SeonilChoi/arti-training-results.git
-export PY=${PY:-C:/Users/seoni/anaconda3/envs/env_isaaclab/python.exe}
+export PY=${PY:-python}  # Isaac Lab 3.x venv python (activate it first)
 ST=logs/automation; mkdir -p "$ST"; touch "$ST/recorded.txt"
 log(){ echo "[$(date '+%F %T')] $*" >> "$ST/auto_record.log"; }
 

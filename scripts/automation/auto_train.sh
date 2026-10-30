@@ -26,7 +26,8 @@ source "$CFG"
 : "${BRANCH:=main}" "${POLL_SEC:=60}" "${PUSH_INTERVAL_SEC:=21600}" "${PUBLISH_EVERY_STEPS:=300000}" "${MAX_CRASH_RESUMES:=3}"
 
 NAME=$(basename "$CFG" .env)
-PY=/workspace/isaaclab/_isaac_sim/python.sh
+# Isaac Lab 3.x image: the uv venv python (the 2.x image used /workspace/isaaclab/_isaac_sim/python.sh)
+: "${PY:=python}" "${PHYSICS:=isaacsim_physx}"
 RUN_YAML=control/run.yaml
 LOG_ROOT=logs/skrl/$LOG_SUBDIR                 # 프로젝트 루트 기준 (호스트/컨테이너 공통)
 STATE_DIR=/opt/isaac/automation/state/$NAME
@@ -120,7 +121,7 @@ start_training(){   # $1 = restart | resume
   "${COMPOSE[@]}" up -d >/dev/null
   local ts; ts=$(date +%Y%m%d_%H%M%S)
   touch "$STATE_DIR/start_marker"
-  docker exec -d "$CONTAINER" bash -c "cd \$PROJECT_PATH && mkdir -p logs && $PY scripts/skrl/train.py --task $TASK --algorithm $ALGO --headless $args $EXTRA_ARGS > logs/train_$ts.log 2>&1; echo \$? > logs/train_$ts.exit"
+  docker exec -d "$CONTAINER" bash -c "cd \$PROJECT_PATH && mkdir -p logs && $PY scripts/skrl/train.py --task $TASK --algorithm $ALGO physics=$PHYSICS $args $EXTRA_ARGS > logs/train_$ts.log 2>&1; echo \$? > logs/train_$ts.exit"
   echo "logs/train_$ts" > "$CUR_LOG"
   touch "$RUNNING"
   log "학습 시작: $mode ${ckpt:+ckpt=$ckpt offset=$off} log=logs/train_$ts.log commit=$(git rev-parse --short HEAD)"

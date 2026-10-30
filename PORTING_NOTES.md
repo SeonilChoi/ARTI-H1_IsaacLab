@@ -182,6 +182,60 @@ Classification: **U** unchanged · **R** renamed/moved · **X** removed · **B**
 9. Smoke `physics=newton_mjwarp` -> Newton-only tuning in presets -> fix loop.
 10. Final report.
 
+## 7. Step 2 log (port)
+
+User answers: Q1 yes (port tuning scripts minimally), Q2 yes (auto_train on the new CLI, docker untouched).
+
+Done:
+- Packaging: `setup.py` gets `entry_points={"isaaclab.tasks": ["arti_h1 = arti_h1.tasks"]}`, python >= 3.12;
+  `ui_extension_example.py` deleted and its import removed (it imported `omni.ext` before Kit starts).
+  Verified: `import arti_h1`, both gym IDs registered, `isaaclab list_envs --keyword Arti --show_presets` lists both
+  tasks with `isaacsim_physx [default]`, `newton_mjwarp`, `newton_kamino`, `ovphysx`.
+- Robot: `PhysxRigidBodyCfg` / `PhysxCollisionCfg` / `[PhysxArticulationCfg, NewtonArticulationCfg]` with the 2.x
+  values verbatim; actuator `effort_limit` -> `actuator_effort_limit` + `joint_effort_limit` (the 2.x implicit
+  `effort_limit` meant both), `velocity_limit_sim` -> `joint_velocity_limit`.
+- Cfg: `ArtiH1PhysicsCfg` (`isaacsim_physx` = `PhysxCfg(solver_type=1, bounce_threshold_velocity=0.2)`, default;
+  `ovphysx`; `physx` auto; `newton_mjwarp` humanoid profile; `newton_kamino` stub) and `ArtiH1SceneCfg`
+  (robot, ground `TerrainImporterCfg` with `PhysxRigidBodyMaterialCfg`, `mti3_imu`, dome light). Hydra path for the
+  PhysX capacity override is now `env.sim.physics.gpu_max_rigid_patch_count` (control/run.yaml updated).
+- Env: scene-bound robot/sensor in `_setup_scene`; IMU `PvaCfg` injected into `cfg.scene` in `__init__` from the
+  `imu_*` fields (so CLI overrides like `env.use_isaac_imu_sensor=False` still remove it); `.torch` on all data
+  reads; quaternion swaps removed; `_index` writers; `actuators.target_command.set_position_index`;
+  `actuators.applied_effort`; `add_forces_and_torques_index`; reset ids via `torch.arange`; `_default_root_state()`
+  helper rebuilds the 2.x 13-vector from `default_root_pose` / `default_root_vel`.
+- Amp task: `skrl_cfg_entry_point` -> AMP yaml and `default_agent: skrl` (the Direct task keeps PPO there).
+- `scripts/skrl/train.py`: wraps `isaaclab_rl.entrypoints.backends.train_skrl.run()`; a Runner subclass installs the
+  unchanged AMP diagnostics hook. Same args as `isaaclab train --rl_library skrl`.
+- `scripts/skrl/play.py`: `play_skrl.py` structure (`resolve_task_config`, `launch_simulation`, common helpers) with the
+  2.x command sequence / pushes; `resolve_task_config(play_mode=False)` because the 2.x script played the training cfg
+  (the base `play_mode()` would cap num_envs at 50 and disable obs noise). Push writes `write_root_velocity_to_sim_index`.
+  Video camera still set through `env_cfg.viewer.*` (deprecated, forwarded by `DirectRLEnv` to the visualizer cfgs incl.
+  Kit env-origin tracking).
+- Tuning python: `.torch`, XYZW, `_index` writers, `cfg.scene.robot`, `spawn.fix_root_link` (spawner-level in 3.x),
+  actuator collection reads. `check_onnx_in_env --save_log` and `check_controller_obs` keep their WXYZ outputs /
+  helpers by converting at the boundary (robot-log tooling expects WXYZ). They keep the deprecated `AppLauncher`
+  adapter (always starts Kit) and `parse_env_cfg` (resolves the default preset) -> PhysX only.
+- Shell: `record_video.sh` (no D3D12 / `--headless` / `--kit_args`; `--video viz:kit` by default to keep the RTX
+  recording, `VIDEO_SOURCE`/`PHYSICS` env overrides), `check.sh` (`pgrep` instead of PowerShell), `auto_record.sh`
+  (default `PY=python`), `auto_train.sh` (`PY`/`PHYSICS` from the env file, `physics=$PHYSICS`, no `--headless`).
+- README: versions, install via the Isaac Lab uv venv, CLI commands.
+
+Behaviour changes forced by the API (step 2):
+- B1. `check_onnx_in_env --save_log` gyro column: 2.x read `data.body_ang_vel_b` behind a `hasattr` guard; 3.x has no
+  such property, so it is now computed as `quat_apply_inverse(body_quat_w, body_ang_vel_w)` (same definition).
+- B2. `replay_demo.py --video` removed: `render_mode="rgb_array"` frames no longer exist (`env.render()` returns None) and
+  `VideoRecorderCfg` sources are resolved by `launch_simulation`, which the AppLauncher script does not use. The
+  script exits with a message if `--video` is given; the YAML replay export is unchanged.
+- B3. `play.py --video`: `_BlankFrameGuard` dropped (it wrapped the removed `gym.wrappers.RecordVideo` path); the
+  `--use_pretrained_checkpoint` flag is gone (no published checkpoint for this task; 3.x spelling is `--checkpoint pretrained`).
+- B4. `ovphysx` preset cannot express `solver_type` / `bounce_threshold_velocity` (fields not on `OvPhysxCfg`).
+- B5. The IMU accelerometer (Pva) no longer contains +g; not used by any observation.
+
+Not done / known gaps:
+- `docker/` still builds the Isaac Sim 5.1 image; the server must be rebuilt on the 3.x stack before running this branch.
+- `scripts/automation/README.md` still documents the Windows Task Scheduler setup for `auto_record.sh`.
+- The inactive `imu_backend="command"` path in `mti3_imu.py` (Kit commands, `isaacsim.sensors.*`) is left as is.
+
 ## Fix log
 
 (filled in during steps 3-4)

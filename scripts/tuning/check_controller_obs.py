@@ -4,7 +4,7 @@ Uses the URDF directly (forward kinematics from the joint origins / axes, like p
 simulated robot state, so a mismatch points at a convention difference between the controller and the env
 (joint rotation encoding, toe frame, heading frame, joint order).
 
-    python -u scripts/tuning/check_controller_obs.py --headless --motion_folder .../arti_h1 \
+    python -u scripts/tuning/check_controller_obs.py --motion_folder .../arti_h1 \
         --nominal_table .../arti_h1_nominal_gait_command.npy --hip_roll_limit 0.2618
 """
 import argparse
@@ -128,10 +128,11 @@ with torch.inference_mode():
         d = uenv.robot.data
         pol = obs["policy"].cpu().numpy()
         for e in range(uenv.num_envs):
-            q = dict(zip(names, d.joint_pos[e].cpu().numpy()))
-            qd = dict(zip(names, d.joint_vel[e].cpu().numpy()))
-            R = quat_wxyz_to_R(d.body_quat_w[e, uenv.ref_body_index].cpu().numpy())
-            w = d.body_ang_vel_w[e, uenv.ref_body_index].cpu().numpy()
+            q = dict(zip(names, d.joint_pos.torch[e].cpu().numpy()))
+            qd = dict(zip(names, d.joint_vel.torch[e].cpu().numpy()))
+            # Isaac Lab 3.x quaternions are (x, y, z, w)
+            R = quat_wxyz_to_R(d.body_quat_w.torch[e, uenv.ref_body_index][[3, 0, 1, 2]].cpu().numpy())
+            w = d.body_ang_vel_w.torch[e, uenv.ref_body_index].cpu().numpy()
             ours = controller_obs(R, w, q, qd)
             for g, sl in groups.items():
                 worst[g] = max(worst[g], float(np.abs(ours[sl] - pol[e, sl]).max()))

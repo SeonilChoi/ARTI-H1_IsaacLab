@@ -49,7 +49,7 @@ try:
             if step * u.step_dt < 2.0:
                 continue
             b = (u.gait_phase * bins).long().clamp(0, bins - 1)
-            achieved = u.robot.data.joint_pos - u.robot.data.default_joint_pos
+            achieved = u.robot.data.joint_pos.torch - u.robot.data.default_joint_pos.torch
             err_sum.index_add_(0, b, ref[b] - achieved)
             n.index_add_(0, b, torch.ones_like(u.gait_phase))
             f = torch.stack([u._get_offset_body_position(i, o, True)[:, 2] for i, o in
@@ -61,7 +61,7 @@ try:
               + f" | sole peak L {peak[:,0].mean()*1000:.1f} R {peak[:,1].mean()*1000:.1f} mm", flush=True)
         if it < args.iters:
             cmd = cmd + args.gain * err
-            lo = u._joint_pos_lower[0] - u.robot.data.default_joint_pos[0]; hi = u._joint_pos_upper[0] - u.robot.data.default_joint_pos[0]
+            lo = u._joint_pos_lower[0] - u.robot.data.default_joint_pos.torch[0]; hi = u._joint_pos_upper[0] - u.robot.data.default_joint_pos.torch[0]
             cmd = torch.max(torch.min(cmd, hi), lo)
     np.save(out_file, cmd.cpu().numpy())
     print(f"[ILC] saved {out_file}", flush=True)
