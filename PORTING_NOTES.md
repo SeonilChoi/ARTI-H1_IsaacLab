@@ -328,3 +328,17 @@ Open risks:
 - R4. Tuning scripts run PhysX only (AppLauncher adapter); `replay_demo --video` removed.
 - R5. `play.py --video` / `record_video.sh` (Kit RTX recording through the deprecated viewer shim) not exercised.
 - R6. `newton_kamino` and `ovphysx` presets are declared but untested.
+
+## 9. Backend test matrix (2026-10-30)
+
+`scripts/porting/test_backends.sh` (per backend: train 3 iterations -> `isaaclab play --video` -> `scripts/skrl/play.py
+--video` with the command sequence and pushes): 8/8 PASS on isaacsim_physx and newton_mjwarp, every video complete with
+0 blank frames, push at 2.50 s and the `stand` command fire on both backends.
+Report: https://claude.ai/artifact/QuThfPnbNAp9VCNPmMkBdy
+
+Found while testing:
+- T1. `video_blank_check.py` read 0 frames from every (valid, H.264) video: the 3.x venv's OpenCV has no FFmpeg backend.
+  Now falls back to imageio-ffmpeg. `record_video.sh` / `auto_*` use this checker.
+- T2. With early termination on (as in 2.x play), a 3-iteration policy falls and env 0 resets before t = 2.5 s, so no
+  push / command switch is printed. Confirmed by rerunning with `env.early_termination=False` (push at 2.50 s, stand at
+  5.0 s). Not a port issue; the matrix's play.py check uses that override. `play.py` itself is unchanged.
