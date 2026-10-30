@@ -253,3 +253,78 @@ Not done / known gaps:
   rest_offset=0.0): the USD's collision meshes are instanced. Isaac Lab v2.3.2 `apply_nested` also skipped instanced
   prims (`if child_prim.IsInstance(): continue`, checked in the IsaacLab git history), so these values never reached
   this asset in 2.x either: not a behaviour change. Kept in the cfg as in 2.x.
+
+### Step 4: physics=newton_mjwarp
+
+Fix 1 (root cause: asset, Newton importer is strict). Run 1 failed in `newton.utils.import_usd.parse_usd` ->
+`_raise_on_stage_errors`: `configuration/arti_h1_base.usd` references `</visuals/trunk>`, `</visuals/left_foot>`,
+`</visuals/right_foot>` in `arti_h1_physics.usd`, which has no `/visuals` prims (mesh-less frame links). Kit/PhysX only
+warns; Newton raises on any composition error, unconditionally. The arcs live inside the asset's layer stack, so no
+override from the scene stage removes them (tested: explicit empty reference list and deactivation both leave the 3
+errors). Fix without touching any `*.usd` file: `robots/arti_h1.py:spawn_arti_h1_usd` strips those three reference
+edits from the in-memory `arti_h1_base.usd` layer (never saved; md5 of every asset file verified unchanged) before
+`spawn_from_usd`. Applies to both backends: an unresolved reference composes nothing, so PhysX is unchanged (AMP check
+re-run on PhysX: identical precision) and its 3 USD warnings disappear.
+
+Fix 2 (root cause: asset authoring vs Newton shape import). Run 2 trained, but every episode ended after 9 steps:
+`CollisionAPI applied to an unknown UsdGeomGPrim type` for all 13 colliders -> the robot had no collision shapes and
+fell through the ground. The URDF importer authored `CollisionAPI` + `MeshCollisionAPI(convexHull)` on each
+`node_STL_BINARY_` Xform whose single child `mesh` is the geometry; PhysX builds the hull from the Xform's child,
+Newton only creates shapes from gprims. Fix: on the Newton backend only (`SimulationContext.instance().cfg.physics`
+from `isaaclab_newton`), the same two APIs and `physics:approximation` are added as `over` specs on the child `mesh`
+in the in-memory `arti_h1_physics.usd` layer. Verified offline: 13 collision Mesh prims, no visual prim gets a
+collider, 0 composition errors, asset files unchanged. The remaining Xform warnings are expected (ignored by Newton).
+
+Newton-only tuning (in `ArtiH1PhysicsCfg.newton_mjwarp` only):
+- Solver: Isaac Lab `core/locomotion/humanoid` MJWarp profile (njmax 80, nconmax 25, pyramidal, implicitfast,
+  impratio 1), num_substeps 1 because sim.dt is already 1/240.
+- Contact: `default_shape_cfg=NewtonShapeCfg(margin=0, ke=160000, kd=1100)` (Isaac Lab `core/velocity` legged profile).
+- Deterministic A/B (`scripts/porting/compare_backends.py`: zero policy action = nominal gait table, balance support on,
+  standstill reset, no DR, 16 envs x 4 s):
+
+  | metric | isaacsim_physx | newton default contact | newton final |
+  |---|---|---|---|
+  | min sole z (penetration) | -0.01 mm | -2.42 mm | -1.45 mm |
+  | pelvis z mean | 10.8 mm | 6.9 mm | 7.6 mm |
+  | PD target - q (mean) | 0.0297 rad | 0.0321 rad | 0.0331 rad |
+  | joint vel rms | 0.700 rad/s | 0.756 rad/s | 0.749 rad/s |
+  | pelvis tilt mean | 2.8 deg | 4.9 deg | 5.1 deg |
+  | terminations | 0 | 0 | 0 |
+
+  ke 2e4 and 1.6e5 gave the same result (plateau), i.e. the residual is MuJoCo's soft-contact model, not stiffness.
+- Verified identical on both backends after init: armature from the actuator model, real joint limits, hip_roll limit,
+  soft limits, kp/kd, velocity/effort limits, total mass 11.174 kg.
+- `debug_mode=True`, 64 envs x 4 s: no contact-capacity overflow; solver iterations max 5 of 100 (mostly 2).
+- Armature / friction / joint-limit overrides: none needed (values identical, no instability), so none were added.
+
+Final results (same commands as steps 3/4, default agent cfg):
+- `physics=newton_mjwarp`: exit 0, no Traceback / NaN, 4.6 s training (logs/porting/smoke_newton_mjwarp.log).
+- `physics=isaacsim_physx` regression after the spawner change: exit 0, no Traceback / NaN, 5.8 s.
+- `check_amp_consistency.py` on Newton: root and AMP observation exact (0 error), toes 2.4e-4 m.
+
+Behaviour differences on Newton (vs the PhysX reference):
+- N1. ~1.5 mm sole penetration, ~3 mm lower pelvis, ~2 deg more pelvis tilt under the nominal gait (table above).
+  Sole-height thresholds (`foot_contact_height` 8 mm) and gait rewards see a slightly lower foot.
+- N2. `joint_velocity_limit` (ankles 5 rad/s, others 30 rad/s) is written to the model but not enforced by MJWarp.
+- N3. `randomize_rigid_body_material` on Newton samples one friction coefficient (no static/dynamic split,
+  `num_buckets` / `make_consistent` ignored); `randomize_rigid_body_com` on MJWarp is flagged upstream as possibly
+  unstable (no instability seen in the smoke runs); a UserWarning notes Newton CoM poses have a unit quaternion.
+- N4. `contact_offset` / `rest_offset` (PhysX-only) do not exist on Newton (they never applied on PhysX either, Step 3).
+- N5. Newton "Inertia validation corrected 48 bodies" (3 per env: the mass-less trunk / foot frame links, also flagged
+  by the PhysX parser as {1,1,1} inertia).
+
+## 8. Final report
+
+Commits on `isaaclab3` (oldest first): ignore porting logs; analysis; package/robot/env/cfg port; skrl train/play;
+tuning/automation/README; PhysX smoke + consistency check; Newton fixes + tuning + final notes.
+
+Open risks:
+- R1. No training run beyond 3 iterations on either backend: learning parity with the 2.x runs is unverified.
+  A Newton-trained policy is not expected to transfer 1:1 to the PhysX-tuned deployment (N1-N3).
+- R2. The in-memory asset fixes depend on the asset layout (`configuration/arti_h1_base.usd`, `arti_h1_physics.usd`,
+  `/colliders/.../node_STL_BINARY_/mesh`). If the asset is re-exported, re-check (or fix the asset itself, the
+  durable solution: re-import with the 3.x URDF converter / add the visual prims and mesh-level collision APIs).
+- R3. The server docker image is still the 2.x stack; `auto_train.sh` on this branch needs the 3.x image.
+- R4. Tuning scripts run PhysX only (AppLauncher adapter); `replay_demo --video` removed.
+- R5. `play.py --video` / `record_video.sh` (Kit RTX recording through the deprecated viewer shim) not exercised.
+- R6. `newton_kamino` and `ovphysx` presets are declared but untested.

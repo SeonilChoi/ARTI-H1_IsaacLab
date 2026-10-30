@@ -11,6 +11,72 @@ from isaaclab.assets import ArticulationCfg
 
 ISAACLAB_ASSETS_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "assets")
 
+# configuration/arti_h1_base.usd references /visuals/<body> in arti_h1_physics.usd for these frame links, but the physics
+# layer has no such prims (the links carry no mesh). Kit/PhysX only warns about the unresolved arcs; Newton's USD
+# importer raises on any stage composition error. The arcs are authored inside the asset's own layer stack, so no
+# override on the scene stage can remove them: they are stripped from the in-memory base layer (never saved, the file
+# is unchanged). Removing an unresolved reference composes the same (empty) prims, on every backend.
+_DANGLING_VISUAL_REFERENCE_BODIES = ("trunk", "left_foot", "right_foot")
+_patched_layers = []  # keeps the edited layers alive in the USD layer registry for the whole process
+
+
+def _strip_dangling_visual_references(usd_path: str) -> None:
+    from pxr import Sdf
+
+    layer = Sdf.Layer.FindOrOpen(os.path.join(os.path.dirname(usd_path), "configuration", "arti_h1_base.usd"))
+    if layer is None or layer in _patched_layers:
+        return
+    for body in _DANGLING_VISUAL_REFERENCE_BODIES:
+        spec = layer.GetPrimAtPath(f"/arti_h1/{body}/visuals")
+        if spec is not None:
+            spec.referenceList.ClearEdits()
+    _patched_layers.append(layer)
+
+
+# The URDF importer put CollisionAPI + MeshCollisionAPI(convexHull) on each collider's "node_STL_BINARY_" Xform, whose
+# single child "mesh" holds the geometry. PhysX builds the hull from the Xform's child; Newton only turns gprims into
+# shapes ("CollisionAPI applied to an unknown UsdGeomGPrim type"), leaving the robot without collision shapes. For
+# Newton the same collision APIs and approximation are added to that child mesh, in memory only (file unchanged).
+_COLLISION_SCHEMAS = ("PhysicsCollisionAPI", "PhysicsMeshCollisionAPI")
+
+
+def _add_newton_mesh_colliders(usd_path: str) -> None:
+    from pxr import Sdf
+
+    layer = Sdf.Layer.FindOrOpen(os.path.join(os.path.dirname(usd_path), "configuration", "arti_h1_physics.usd"))
+    if layer is None or layer in _patched_layers:
+        return
+    colliders = []
+    layer.Traverse("/colliders", lambda path: colliders.append(path) if path.IsPrimPath() else None)
+    for path in colliders:
+        spec = layer.GetPrimAtPath(path)
+        if spec.name != "node_STL_BINARY_" or "PhysicsCollisionAPI" not in spec.GetInfo("apiSchemas").GetAddedOrExplicitItems():
+            continue
+        mesh = layer.GetPrimAtPath(path.AppendChild("mesh")) or Sdf.PrimSpec(spec, "mesh", Sdf.SpecifierOver)
+        mesh.SetInfo("apiSchemas", Sdf.TokenListOp.Create(prependedItems=list(_COLLISION_SCHEMAS)))
+        approximation = spec.attributes.get("physics:approximation")
+        if approximation is not None:
+            attr = Sdf.AttributeSpec(mesh, "physics:approximation", Sdf.ValueTypeNames.Token, Sdf.VariabilityUniform)
+            attr.default = approximation.default
+    _patched_layers.append(layer)
+
+
+def _physics_is_newton() -> bool:
+    from isaaclab.sim import SimulationContext
+
+    sim = SimulationContext.instance()
+    return sim is not None and type(sim.cfg.physics).__module__.startswith("isaaclab_newton")
+
+
+def spawn_arti_h1_usd(prim_path, cfg, translation=None, orientation=None, **kwargs):
+    """``spawn_from_usd`` after the in-memory asset fixes above (Newton colliders only on the Newton backend)."""
+    from isaaclab.sim.spawners.from_files.from_files import spawn_from_usd
+
+    _strip_dangling_visual_references(cfg.usd_path)
+    if _physics_is_newton():
+        _add_newton_mesh_colliders(cfg.usd_path)
+    return spawn_from_usd(prim_path, cfg, translation, orientation, **kwargs)
+
 
 # Standing pose = first frame of every reference clip. The right leg chain is the left one rotated
 # by pi about z in the URDF (right_hip_yaw rpy 0 0 pi), so both legs use the same joint signs.
@@ -93,6 +159,7 @@ JOINT_VELOCITY_LIMIT = {
 ARTI_H1_CFG = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/Robot",
     spawn=sim_utils.UsdFileCfg(
+        func=spawn_arti_h1_usd,
         usd_path=f"{ISAACLAB_ASSETS_DIR}/models/arti_h1/arti_h1/arti_h1.usd",
         # Isaac Lab 3.x schema fragments: the PhysX values are the 2.x RigidBody/Collision/ArticulationRootPropertiesCfg
         # values unchanged; the Newton fragment only mirrors enabled_self_collisions=False.

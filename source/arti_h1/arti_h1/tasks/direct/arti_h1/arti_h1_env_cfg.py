@@ -2,7 +2,7 @@ import os
 
 from arti_h1.robots import ISAACLAB_ASSETS_DIR, ARTI_H1_CFG
 
-from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCfg
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCfg, NewtonShapeCfg
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
@@ -148,7 +148,9 @@ class ArtiH1PhysicsCfg(PresetCfg):
     # OvPhysxCfg exposes neither solver_type nor bounce_threshold_velocity: runs on its own defaults.
     ovphysx: OvPhysxCfg = OvPhysxCfg()
     physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
-    # Starting profile: core/locomotion/humanoid (biped, flat plane). sim.dt is already 1/240, so one substep.
+    # Solver: core/locomotion/humanoid profile (biped on a plane); sim.dt is already 1/240, so one substep.
+    # Contact: core/velocity legged profile. With the Newton defaults (ke 2.5e3, kd 100) the soles sank 2.4 mm in the
+    # zero-action standstill A/B (PhysX ~0); with these 1.45 mm (scripts/porting/compare_backends.py, PORTING_NOTES).
     newton_mjwarp: NewtonCfg = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
             njmax=80,
@@ -159,6 +161,7 @@ class ArtiH1PhysicsCfg(PresetCfg):
         ),
         num_substeps=1,
         debug_mode=False,
+        default_shape_cfg=NewtonShapeCfg(margin=0.0, ke=160000.0, kd=1100.0),
     )
     # Stub for the closed-loop variants (core/velocity pattern); not tuned.
     newton_kamino: NewtonCfg = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))
