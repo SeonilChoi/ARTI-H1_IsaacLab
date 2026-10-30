@@ -238,4 +238,18 @@ Not done / known gaps:
 
 ## Fix log
 
-(filled in during steps 3-4)
+### Step 3: physics=isaacsim_physx
+
+- `isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=isaacsim_physx --num_envs 16
+  --max_iterations 3`: passed on the first run (exit 0, no Traceback, 8.5 s training, final checkpoint saved).
+  Log: logs/porting/smoke_isaacsim_physx.log. No code fix was needed.
+- Same run through `scripts/skrl/train.py` with `agent.agent.experiment.write_interval=48`: exit 0, 76 TensorBoard
+  scalars, none non-finite; the AMP diagnostics scalars are written (wrapper works).
+- Quaternion / reset verification (`scripts/porting/check_amp_consistency.py`): writes RSI reference states with the
+  3.x `_index` writers, runs kinematics, and compares the env's AMP observation of that state with the motion loader's.
+  Root quat |dot| = 1.0, root pos 7e-8 m, joints exact; AMP groups orientation 6e-8, velocities <= 1e-8,
+  joints 0, toes 2.4e-4 m. The 3.x XYZW port is exact end to end.
+- Warning `No collision targets matched '/World/envs/env_0/Robot(/.*)?'` (PhysxCollisionCfg contact_offset=0.02 /
+  rest_offset=0.0): the USD's collision meshes are instanced. Isaac Lab v2.3.2 `apply_nested` also skipped instanced
+  prims (`if child_prim.IsInstance(): continue`, checked in the IsaacLab git history), so these values never reached
+  this asset in 2.x either: not a behaviour change. Kept in the cfg as in 2.x.
