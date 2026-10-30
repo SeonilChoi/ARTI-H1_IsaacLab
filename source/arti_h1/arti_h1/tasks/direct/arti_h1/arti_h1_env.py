@@ -8,13 +8,12 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv
 from isaaclab.utils.math import quat_apply
 
 from arti_h1.tasks.utils import MotionLoader
-from arti_h1.tasks.utils.mti3_imu import Mti3ImuModel, create_mti3_imu_sensor_prims, create_mti3_lab_imu_sensor
+from arti_h1.tasks.utils.mti3_imu import Mti3ImuModel, create_mti3_imu_sensor_prims, make_mti3_pva_cfg
 
 from .arti_h1_env_cfg import ArtiH1AmpEnvCfg
 
@@ -23,6 +22,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
     cfg: ArtiH1AmpEnvCfg
 
     def __init__(self, cfg: ArtiH1AmpEnvCfg, render_mode: str | None = None, **kwargs):
+        # The scene is built from cfg.scene in 3.x; add the MTi-3 sensor from the (possibly overridden) imu_* fields.
+        setattr(cfg.scene, cfg.imu_sensor_name, make_mti3_pva_cfg(cfg))
         super().__init__(cfg, render_mode, **kwargs)
 
         motion_files = [
@@ -56,7 +57,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         if getattr(self.cfg, "real_joint_limits", False):
             names = self.robot.data.joint_names
             lim = torch.tensor([self.cfg.real_joint_limit_table[n.split("_", 1)[1]] for n in names], device=self.device)
-            self.robot.write_joint_position_limit_to_sim(lim.unsqueeze(0).repeat(self.num_envs, 1, 1))
+            self.robot.write_joint_position_limit_to_sim_index(limits=lim.unsqueeze(0).repeat(self.num_envs, 1, 1))
             print("[INFO] real motor.yaml joint limits applied", flush=True)
         hip_roll_limit = getattr(self.cfg, "hip_roll_limit", None)
         if hip_roll_limit:
@@ -65,14 +66,12 @@ class ArtiH1AmpEnv(DirectRLEnv):
             limits = torch.tensor([-hip_roll_limit, hip_roll_limit], device=self.device).repeat(
                 self.num_envs, len(hip_roll_ids), 1
             )
-            self.robot.write_joint_position_limit_to_sim(limits, joint_ids=hip_roll_ids)
+            self.robot.write_joint_position_limit_to_sim_index(limits=limits, joint_ids=hip_roll_ids)
             print(f"[INFO] hip_roll limited to +-{math.degrees(hip_roll_limit):.1f} deg", flush=True)
         if self.cfg.actuator_model:
             self._init_actuator_model()
 
-        joint_pos_limits = getattr(self.robot.data, "soft_joint_pos_limits", None)
-        if joint_pos_limits is None:
-            joint_pos_limits = getattr(self.robot.data, "joint_pos_limits", None)
+        joint_pos_limits = self.robot.data.soft_joint_pos_limits.torch
         self._joint_pos_lower = joint_pos_limits[..., 0] if joint_pos_limits is not None else None
         self._joint_pos_upper = joint_pos_limits[..., 1] if joint_pos_limits is not None else None
 
@@ -194,7 +193,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         """Joint position / velocity the policy sees. The real Unitree hip / knee motors share one RS485 bus: a missed
         reply delays the whole bus cycle, so their state repeats the previous control step (1-3 % of steps standing,
         10-17 % in the 10-24 walk). With cfg.joint_obs_stale_prob those joints keep last step's values."""
-        pos, vel = self.robot.data.joint_pos, self.robot.data.joint_vel
+        pos, vel = self.robot.data.joint_pos.torch, self.robot.data.joint_vel.torch
         if hasattr(self, "joint_obs_offset"):
             pos = pos + self.joint_obs_offset  # encoder / homing calibration error, constant per episode
         if self.cfg.joint_obs_stale_prob <= 0.0:
@@ -230,7 +229,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             np.add.at(total, b, frames[valid][:, joint_idx])
             np.add.at(count, b, 1.0)
         mean = total / np.maximum(count, 1.0)[:, None]
-        default = self.robot.data.default_joint_pos[0].cpu().numpy()
+        default = self.robot.data.default_joint_pos.torch[0].cpu().numpy()
         return torch.tensor(mean - default, dtype=torch.float32, device=self.device)
 
     def _reference_joint_vel_rms(self, floor: float) -> torch.Tensor:
@@ -278,24 +277,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
         return left, right
 
     def _setup_scene(self):
-        self.robot = Articulation(self.cfg.robot)
-
-        self.cfg.terrain.num_envs = self.scene.cfg.num_envs
-        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
-        self.terrain = self.cfg.terrain.class_type(self.cfg.terrain)
-
-        self.scene.clone_environments(copy_from_source=False)
-        if self.device == "cpu":
-            self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
-
-        self.scene.articulations["robot"] = self.robot
-        self._lab_imu_sensor = create_mti3_lab_imu_sensor(self.cfg)
-        if self._lab_imu_sensor is not None:
-            self.scene.sensors[self.cfg.imu_sensor_name] = self._lab_imu_sensor
+        # Robot, ground (global collision group), MTi-3 Pva sensor and light are declared in ArtiH1SceneCfg and
+        # cloned by the scene; this hook only binds them.
+        self.robot: Articulation = self.scene["robot"]
+        self._lab_imu_sensor = self.scene.sensors.get(self.cfg.imu_sensor_name)
         self._imu_sensor_paths = create_mti3_imu_sensor_prims(self.cfg, self.scene.cfg.num_envs)
-
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.previous_actions.copy_(self.actions)
@@ -342,7 +328,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
     def _apply_action(self):
         actions = torch.clamp(self.actions, -1.0, 1.0)
         action_scale = torch.where(actions >= 0.0, self.action_positive_scale, self.action_negative_scale)
-        target = self.robot.data.default_joint_pos + action_scale * actions
+        target = self.robot.data.default_joint_pos.torch + action_scale * actions
         if self.cfg.nominal_gait_scale > 0.0:
             # Residual policy on the clock-driven reference stepping pattern (see _build_nominal_gait_table).
             target = target + self.cfg.nominal_gait_scale * self._nominal_gait_offset()
@@ -352,7 +338,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.desired_joint_target = target
         if self.cfg.actuator_model:
             target = self._apply_actuator_model(target)
-        self.robot.set_joint_position_target(target)
+        self.robot.actuators.target_command.set_position_index(value=target)
         self._apply_balance_support()
 
     def _init_actuator_model(self):
@@ -369,7 +355,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.actuator_buffer_head = 0
         lo, hi = self.cfg.actuator_armature_scale_range
         armature = per_joint(self.cfg.actuator_armature)[None, :] * torch.empty(n, 1, device=self.device).uniform_(lo, hi)
-        self.robot.write_joint_armature_to_sim(armature)
+        self.robot.write_joint_armature_to_sim_index(armature=armature)
         lo, hi = self.cfg.actuator_coulomb_scale_range
         self.actuator_coulomb = per_joint(self.cfg.actuator_coulomb)[None, :] * torch.empty(n, 1, device=self.device).uniform_(lo, hi)
         self.actuator_stuck = torch.zeros(n, len(names), dtype=torch.bool, device=self.device)
@@ -384,9 +370,9 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.actuator_buffer[self.actuator_buffer_head] = target
         index = (self.actuator_buffer_head - self.actuator_delay_steps) % steps
         delayed = torch.gather(self.actuator_buffer.permute(1, 2, 0), 2, index.unsqueeze(-1)).squeeze(-1)
-        q = self.robot.data.joint_pos
-        qd = self.robot.data.joint_vel
-        kp = self.robot.data.joint_stiffness.clamp_min(1e-3)
+        q = self.robot.data.joint_pos.torch
+        qd = self.robot.data.joint_vel.torch
+        kp = self.robot.data.joint_stiffness.torch.clamp_min(1e-3)
         err = delayed - q
         moving = qd.abs() > self.cfg.actuator_stick_velocity
         stick = ~moving & (kp * err.abs() <= self.actuator_coulomb)
@@ -405,15 +391,15 @@ class ArtiH1AmpEnv(DirectRLEnv):
         fraction = self._support_fraction()
         if fraction <= 0.0 or self.cfg.balance_support_kp <= 0.0:
             return
-        quat = self.robot.data.body_quat_w[:, self.ref_body_index]
+        quat = self.robot.data.body_quat_w.torch[:, self.ref_body_index]
         up_w = quat_apply(quat, self.up_axis_b.expand(self.num_envs, -1))
         z_w = torch.zeros_like(up_w)
         z_w[:, 2] = 1.0
         torque = self.cfg.balance_support_kp * torch.cross(up_w, z_w, dim=-1)
-        torque[:, :2] -= self.cfg.balance_support_kd * self.robot.data.body_ang_vel_w[:, self.ref_body_index, :2]
+        torque[:, :2] -= self.cfg.balance_support_kd * self.robot.data.body_ang_vel_w.torch[:, self.ref_body_index, :2]
         torque[:, 2] = 0.0
         torque = torque * fraction
-        self.robot.instantaneous_wrench_composer.add_forces_and_torques(
+        self.robot.instantaneous_wrench_composer.add_forces_and_torques_index(
             forces=torch.zeros_like(torque).unsqueeze(1),
             torques=torque.unsqueeze(1),
             body_ids=self._support_body_ids,
@@ -430,33 +416,33 @@ class ArtiH1AmpEnv(DirectRLEnv):
         return 1.0 - (step - start) / (end - start)
 
     def _get_offset_body_position(self, body_index: int, offset: torch.Tensor, has_offset: bool) -> torch.Tensor:
-        body_position = self.robot.data.body_pos_w[:, body_index]
+        body_position = self.robot.data.body_pos_w.torch[:, body_index]
         if not has_offset:
             return body_position
 
         offset_w = quat_apply(
-            self.robot.data.body_quat_w[:, body_index],
+            self.robot.data.body_quat_w.torch[:, body_index],
             offset.expand(self.num_envs, -1),
         )
         return body_position + offset_w
 
     def _get_offset_body_linear_velocity(self, body_index: int, offset: torch.Tensor, has_offset: bool) -> torch.Tensor:
-        body_velocity = self.robot.data.body_lin_vel_w[:, body_index]
+        body_velocity = self.robot.data.body_lin_vel_w.torch[:, body_index]
         if not has_offset:
             return body_velocity
 
         offset_w = quat_apply(
-            self.robot.data.body_quat_w[:, body_index],
+            self.robot.data.body_quat_w.torch[:, body_index],
             offset.expand(self.num_envs, -1),
         )
-        return body_velocity + torch.cross(self.robot.data.body_ang_vel_w[:, body_index], offset_w, dim=-1)
+        return body_velocity + torch.cross(self.robot.data.body_ang_vel_w.torch[:, body_index], offset_w, dim=-1)
 
     def _get_observations(self) -> dict:
-        root_position = self.robot.data.body_pos_w[:, self.ref_body_index]
-        root_orientation_quat_wxyz = self.robot.data.body_quat_w[:, self.ref_body_index]
-        root_orientation_quat_xyzw = root_orientation_quat_wxyz[:, [1, 2, 3, 0]]
-        world_linear_velocity = self.robot.data.body_lin_vel_w[:, self.ref_body_index]
-        world_angular_velocity = self.robot.data.body_ang_vel_w[:, self.ref_body_index]
+        root_position = self.robot.data.body_pos_w.torch[:, self.ref_body_index]
+        # Isaac Lab 3.x quaternions are (x, y, z, w), the motion loader's order
+        root_orientation_quat_xyzw = self.robot.data.body_quat_w.torch[:, self.ref_body_index]
+        world_linear_velocity = self.robot.data.body_lin_vel_w.torch[:, self.ref_body_index]
+        world_angular_velocity = self.robot.data.body_ang_vel_w.torch[:, self.ref_body_index]
 
         policy_orientation_quat_xyzw = root_orientation_quat_xyzw
         policy_angular_velocity = world_angular_velocity
@@ -507,14 +493,14 @@ class ArtiH1AmpEnv(DirectRLEnv):
             policy_angular_velocity,
         )
 
-        joints_positions_vectorized = self.motion_loader.vectorize_joint_positions(self.robot.data.joint_pos)
+        joints_positions_vectorized = self.motion_loader.vectorize_joint_positions(self.robot.data.joint_pos.torch)
         amp_obs = compute_obs(
             root_position[:, 2:3],
             root_orientation_quat_normalized_heading,
             root_linear_velocity_normalized_heading,
             local_root_angular_velocity_normalized_heading,
             joints_positions_vectorized,
-            self.robot.data.joint_vel,
+            self.robot.data.joint_vel.torch,
             amp_local_toe_positions[:, 0],
             amp_local_toe_positions[:, 1],
         )
@@ -587,10 +573,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
         )
 
     def _get_rewards(self) -> torch.Tensor:
-        root_orientation_quat_wxyz = self.robot.data.body_quat_w[:, self.ref_body_index]
-        root_orientation_quat_xyzw = root_orientation_quat_wxyz[:, [1, 2, 3, 0]]
-        world_linear_velocity = self.robot.data.body_lin_vel_w[:, self.ref_body_index]
-        world_angular_velocity = self.robot.data.body_ang_vel_w[:, self.ref_body_index]
+        # Isaac Lab 3.x quaternions are (x, y, z, w), the motion loader's order
+        root_orientation_quat_xyzw = self.robot.data.body_quat_w.torch[:, self.ref_body_index]
+        world_linear_velocity = self.robot.data.body_lin_vel_w.torch[:, self.ref_body_index]
+        world_angular_velocity = self.robot.data.body_ang_vel_w.torch[:, self.ref_body_index]
         if self.cfg.use_average_velocities:
             average_root_velocity = self._update_average_root_velocity(world_linear_velocity, world_angular_velocity)
             reward_linear_velocity = average_root_velocity[:, :3]
@@ -630,21 +616,21 @@ class ArtiH1AmpEnv(DirectRLEnv):
             torch.sum(torch.square(self.previous_actions - self.actions), dim=-1)
             * self.cfg.action_rate_reward_scale
         )
-        applied_torque = self.robot.data.applied_torque
+        applied_torque = self.robot.actuators.applied_effort.torch
         torque_scale = self._torque_curriculum_fraction()
         torque_reward = (
             torch.sum(torch.square(applied_torque / self.joint_effort_limit), dim=-1)
             * self.cfg.torque_reward_scale
             * torque_scale
         )
-        joint_power = torch.sum(torch.abs(applied_torque * self.robot.data.joint_vel), dim=-1)
-        joint_vel_sq = torch.sum(torch.square(self.robot.data.joint_vel), dim=-1)
-        joint_acc_sq = torch.sum(torch.square(self.robot.data.joint_acc), dim=-1)
+        joint_power = torch.sum(torch.abs(applied_torque * self.robot.data.joint_vel.torch), dim=-1)
+        joint_vel_sq = torch.sum(torch.square(self.robot.data.joint_vel.torch), dim=-1)
+        joint_acc_sq = torch.sum(torch.square(self.robot.data.joint_acc.torch), dim=-1)
         # USER (run9 150k video): motion looks too stiff/jerky -> penalise joint speed and acceleration.
         # Normalised per joint by the reference joint-speed rms (floored), so the small-motion roll joints count:
         # run11 moved ankle_roll at 125-130 deg/s vs reference 24 (5x, the "sole flicks" in the video) while the plain
         # sum was dominated by the knee.
-        joint_vel_norm_sq = torch.sum(torch.square(self.robot.data.joint_vel / self.reference_joint_vel_rms), dim=-1)
+        joint_vel_norm_sq = torch.sum(torch.square(self.robot.data.joint_vel.torch / self.reference_joint_vel_rms), dim=-1)
         joint_vel_reward = joint_vel_norm_sq * self.cfg.joint_vel_reward_scale
         joint_acc_reward = joint_acc_sq * self.cfg.joint_acc_reward_scale
         joint_power_reward = joint_power * self.cfg.joint_power_reward_scale * torque_scale
@@ -675,10 +661,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
 
         # Keep the pelvis level like the reference (roll/pitch range 0.0 deg). Run 2026-09-25_03-23-02 rocked the
         # pelvis 8-10 deg in roll every step (roll rate ~25 deg/s rms) to shift its weight.
-        gravity_b = self.robot.data.projected_gravity_b
+        gravity_b = self.robot.data.projected_gravity_b.torch
         base_flat_reward = torch.sum(torch.square(gravity_b[:, :2]), dim=-1) * self.cfg.base_flat_reward_scale
         base_ang_vel_reward = (
-            torch.sum(torch.square(self.robot.data.root_ang_vel_b[:, :2]), dim=-1) * self.cfg.base_ang_vel_xy_reward_scale
+            torch.sum(torch.square(self.robot.data.root_ang_vel_b.torch[:, :2]), dim=-1) * self.cfg.base_ang_vel_xy_reward_scale
         )
         self._base_roll_deg = torch.rad2deg(torch.atan2(gravity_b[:, 1], -gravity_b[:, 2]))
         # Lateral sway: instantaneous heading-frame lateral velocity minus its 0.9 s average (the reward window).
@@ -853,8 +839,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
         # pitching the foot ~25 deg and dragged the toe/heel edge (reference swing sole is flat, 0 deg).
         feet_quat = torch.stack(
             (
-                self.robot.data.body_quat_w[:, self.left_toe_body_index],
-                self.robot.data.body_quat_w[:, self.right_toe_body_index],
+                self.robot.data.body_quat_w.torch[:, self.left_toe_body_index],
+                self.robot.data.body_quat_w.torch[:, self.right_toe_body_index],
             ),
             dim=1,
         )
@@ -883,8 +869,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
         # Penalise the roll/pitch rate of a foot that is off the ground.
         feet_ang_vel = torch.stack(
             (
-                self.robot.data.body_ang_vel_w[:, self.left_toe_body_index],
-                self.robot.data.body_ang_vel_w[:, self.right_toe_body_index],
+                self.robot.data.body_ang_vel_w.torch[:, self.left_toe_body_index],
+                self.robot.data.body_ang_vel_w.torch[:, self.right_toe_body_index],
             ),
             dim=1,
         )
@@ -943,9 +929,9 @@ class ArtiH1AmpEnv(DirectRLEnv):
         # Fore-aft offset of the right sole relative to the left in the heading frame, averaged over one
         # gait cycle. Symmetric walking averages to ~0; run 2026-09-24_04-25-01 kept the right foot ~4 cm
         # ahead in every direction (step-to gait: the left foot never passed the right).
-        root_quat_xyzw = self.robot.data.body_quat_w[:, self.ref_body_index][:, [1, 2, 3, 0]]
+        root_quat_xyzw = self.robot.data.body_quat_w.torch[:, self.ref_body_index]
         local_feet = self.motion_loader.localize_positions(
-            self.robot.data.body_pos_w[:, self.ref_body_index], root_quat_xyzw, feet_position
+            self.robot.data.body_pos_w.torch[:, self.ref_body_index], root_quat_xyzw, feet_position
         )
         self.foot_stagger_ema.lerp_(local_feet[:, 1, 0] - local_feet[:, 0, 0], self.foot_stagger_alpha)
         # L1: the quadratic form flattened out at ~1.2 cm (run 2026-09-24_07-15-59).
@@ -971,7 +957,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         # touchdown: symmetry with the previous (other-leg) swing and closeness to the reference lift. Run
         # 2026-09-24_14-18-09 lifted the left knee 21-26 mm but the right only 11-14 mm (reference 22.9 / 22.9 mm).
         knee_z = torch.stack(
-            [self.robot.data.body_pos_w[:, i, 2] for i in self.knee_body_indices], dim=-1
+            [self.robot.data.body_pos_w.torch[:, i, 2] for i in self.knee_body_indices], dim=-1
         )
         stance_known = self.knee_stance_height > 0.0
         self.knee_stance_height = torch.where(
@@ -1004,7 +990,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
 
         # Ankle pitch range per stride (touchdown to touchdown of the same foot), paid at touchdown against the
         # other leg's last stride. Run26 (zmp02) used 31 deg left vs 23 deg right (reference 26 / 26).
-        ankle_pitch = self.robot.data.joint_pos[:, self.ankle_pitch_ids]
+        ankle_pitch = self.robot.data.joint_pos.torch[:, self.ankle_pitch_ids]
         self.ankle_pitch_max = torch.maximum(self.ankle_pitch_max, ankle_pitch)
         self.ankle_pitch_min = torch.minimum(self.ankle_pitch_min, ankle_pitch)
         ankle_sym_penalty = torch.zeros(self.num_envs, dtype=torch.float32, device=self.device)
@@ -1029,8 +1015,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
         standing = (~moving_command).float()
         self._stand_reward = standing * (
             contact.all(dim=-1).float() * self.cfg.stand_feet_contact_reward_scale
-            - torch.sum(torch.square(self.robot.data.joint_vel), dim=-1) * self.cfg.stand_joint_vel_reward_scale
-            - (torch.abs(self.robot.data.root_ang_vel_w[:, 2]) + torch.linalg.norm(self.robot.data.root_lin_vel_w[:, :2], dim=-1))
+            - torch.sum(torch.square(self.robot.data.joint_vel.torch), dim=-1) * self.cfg.stand_joint_vel_reward_scale
+            - (torch.abs(self.robot.data.root_ang_vel_w.torch[:, 2]) + torch.linalg.norm(self.robot.data.root_lin_vel_w.torch[:, :2], dim=-1))
             * self.cfg.stand_base_motion_reward_scale
         )
         self._gait_swing_contact_penalty = (
@@ -1131,11 +1117,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        termination_body_pos_w = self.robot.data.body_pos_w[:, self.termination_body_index]
+        termination_body_pos_w = self.robot.data.body_pos_w.torch[:, self.termination_body_index]
         if self.has_termination_body_offset:
             offset = self.termination_body_offset.expand(self.num_envs, -1)
             termination_body_pos_w = termination_body_pos_w + quat_apply(
-                self.robot.data.body_quat_w[:, self.termination_body_index],
+                self.robot.data.body_quat_w.torch[:, self.termination_body_index],
                 offset,
             )
         termination_z = termination_body_pos_w[:, 2]
@@ -1144,7 +1130,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             died = termination_z < self.cfg.termination_height
             if self.termination_min_up_z is not None:
                 up_w = quat_apply(
-                    self.robot.data.body_quat_w[:, self.termination_body_index],
+                    self.robot.data.body_quat_w.torch[:, self.termination_body_index],
                     self.up_axis_b.expand(self.num_envs, -1),
                 )
                 died = torch.logical_or(died, up_w[:, 2] < self.termination_min_up_z)
@@ -1152,26 +1138,19 @@ class ArtiH1AmpEnv(DirectRLEnv):
             died = torch.zeros_like(time_out)
         return died, time_out
 
-    def _get_robot_reset_env_ids(self, env_ids: torch.Tensor) -> torch.Tensor:
-        reset_device = getattr(self.robot.instantaneous_wrench_composer, "device", self.device)
-        try:
-            return env_ids.to(device=torch.device(str(reset_device)))
-        except (TypeError, RuntimeError):
-            return env_ids
-
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
-            env_ids = self.robot._ALL_INDICES
+            # robot._ALL_INDICES is a wp.array in 3.x
+            env_ids = torch.arange(self.num_envs, device=self.device)
 
         env_ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
-        reset_env_ids = self._get_robot_reset_env_ids(env_ids)
-        self.robot.reset(reset_env_ids)
-        super()._reset_idx(reset_env_ids)
+        self.robot.reset(env_ids)
+        super()._reset_idx(env_ids)
 
-        root_state = self.robot.data.default_root_state[env_ids].clone()
+        root_state = self._default_root_state(env_ids)
         root_state[:, :3] += self.scene.env_origins[env_ids]
-        joint_pos = self.robot.data.default_joint_pos[env_ids].clone()
-        joint_vel = self.robot.data.default_joint_vel[env_ids].clone()
+        joint_pos = self.robot.data.default_joint_pos.torch[env_ids].clone()
+        joint_vel = self.robot.data.default_joint_vel.torch[env_ids].clone()
 
         if self.cfg.reset_strategy.startswith("random"):
             random_root_state, random_joint_pos, random_joint_vel, motion_ids, times = self._sample_reference_state(
@@ -1185,9 +1164,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
             motion_ids = None
             times = np.zeros(len(env_ids), dtype=np.float64)
 
-        self.robot.write_root_link_pose_to_sim(root_state[:, :7], env_ids)
-        self.robot.write_root_com_velocity_to_sim(root_state[:, 7:], env_ids)
-        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+        self.robot.write_root_link_pose_to_sim_index(root_pose=root_state[:, :7], env_ids=env_ids)
+        self.robot.write_root_com_velocity_to_sim_index(root_velocity=root_state[:, 7:], env_ids=env_ids)
+        self.robot.write_joint_position_to_sim_index(position=joint_pos, env_ids=env_ids)
+        self.robot.write_joint_velocity_to_sim_index(velocity=joint_vel, env_ids=env_ids)
         if self.cfg.actuator_model and hasattr(self, "actuator_buffer"):
             # the delay line restarts at the reset pose (the policy's first target is default + nominal offset)
             self.actuator_buffer[:, env_ids] = joint_pos.unsqueeze(0)
@@ -1212,10 +1192,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.has_last_knee_lift[env_ids] = False
         self.last_swing_time[env_ids] = 0.0
         self.has_last_swing[env_ids] = False
-        self.mti3_imu.reset(env_ids, root_state[:, 3:7][:, [1, 2, 3, 0]], root_state[:, 10:13])
+        self.mti3_imu.reset(env_ids, root_state[:, 3:7], root_state[:, 10:13])
         if self.cfg.joint_obs_offset_range > 0.0:
             if not hasattr(self, "joint_obs_offset"):
-                self.joint_obs_offset = torch.zeros_like(self.robot.data.joint_pos)
+                self.joint_obs_offset = torch.zeros_like(self.robot.data.joint_pos.torch)
             self.joint_obs_offset[env_ids] = torch.empty(
                 (len(env_ids), self.joint_obs_offset.shape[1]), device=self.device
             ).uniform_(-self.cfg.joint_obs_offset_range, self.cfg.joint_obs_offset_range)
@@ -1232,6 +1212,12 @@ class ArtiH1AmpEnv(DirectRLEnv):
 
         amp_observations = self.collect_reference_motions(len(env_ids), times, motion_ids)
         self.amp_observation_buffer[env_ids] = amp_observations.view(len(env_ids), self.cfg.num_amp_observations, -1)
+
+    def _default_root_state(self, env_ids: torch.Tensor) -> torch.Tensor:
+        """2.x default_root_state: [pos, quat (x, y, z, w), lin_vel, ang_vel] in the env frame."""
+        return torch.cat(
+            (self.robot.data.default_root_pose.torch[env_ids], self.robot.data.default_root_vel.torch[env_ids]), dim=-1
+        )
 
     def _sample_reference_state(
         self,
@@ -1257,9 +1243,9 @@ class ArtiH1AmpEnv(DirectRLEnv):
             _,
         ) = self.motion_loader.sample(num_samples, motion_ids=motion_ids, times=times, return_full_state=True)
 
-        root_state = self.robot.data.default_root_state[env_ids].clone()
+        root_state = self._default_root_state(env_ids)
         root_state[:, :3] = root_position + self.scene.env_origins[env_ids]
-        root_state[:, 3:7] = root_orientation_quat_xyzw[:, [3, 0, 1, 2]]
+        root_state[:, 3:7] = root_orientation_quat_xyzw
         root_state[:, 7:10] = root_linear_velocity
         root_state[:, 10:13] = root_angular_velocity
 

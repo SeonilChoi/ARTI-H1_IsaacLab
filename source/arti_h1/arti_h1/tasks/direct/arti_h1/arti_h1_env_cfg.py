@@ -2,17 +2,25 @@ import os
 
 from arti_h1.robots import ISAACLAB_ASSETS_DIR, ARTI_H1_CFG
 
+from isaaclab_newton.physics import KaminoPADMMSolverCfg, MJWarpSolverCfg, NewtonCfg
+from isaaclab_ov.physics import OvPhysxCfg
+from isaaclab_physx.physics import PhysxCfg
+
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.assets import ArticulationCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.physics import PhysxAutoCfg
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import PvaCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
+
+from isaaclab_tasks.utils import PresetCfg
 
 
 ARTI_H1_NUM_JOINTS = 12
@@ -129,6 +137,74 @@ ARTI_H1_IMU_OFFSET_FROM_PELVIS = (
 # pi about z, so both offsets are identical in their own foot-link frames (and mirrored in x in the world).
 ARTI_H1_LEFT_FOOT_OFFSET_FROM_FOOT_LINK = (-0.026, 0.0, -0.051)
 ARTI_H1_RIGHT_FOOT_OFFSET_FROM_FOOT_LINK = (-0.026, 0.0, -0.051)
+
+
+@configclass
+class ArtiH1PhysicsCfg(PresetCfg):
+    """Physics backend presets, selected with physics=<name> (default: isaacsim_physx, the 2.x settings)."""
+
+    # Exactly the Isaac Lab 2.x sim_utils.PhysxCfg(solver_type=1, bounce_threshold_velocity=0.2).
+    isaacsim_physx: PhysxCfg = PhysxCfg(solver_type=1, bounce_threshold_velocity=0.2)
+    # OvPhysxCfg exposes neither solver_type nor bounce_threshold_velocity: runs on its own defaults.
+    ovphysx: OvPhysxCfg = OvPhysxCfg()
+    physx: PhysxAutoCfg = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
+    # Starting profile: core/locomotion/humanoid (biped, flat plane). sim.dt is already 1/240, so one substep.
+    newton_mjwarp: NewtonCfg = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            njmax=80,
+            nconmax=25,
+            cone="pyramidal",
+            integrator="implicitfast",
+            impratio=1,
+        ),
+        num_substeps=1,
+        debug_mode=False,
+    )
+    # Stub for the closed-loop variants (core/velocity pattern); not tuned.
+    newton_kamino: NewtonCfg = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))
+    default: PhysxCfg = isaacsim_physx
+
+
+@configclass
+class ArtiH1SceneCfg(InteractiveSceneCfg):
+    """Robot, ground, IMU and light, cloned by the scene (Isaac Lab 3.x replaces _setup_scene cloning)."""
+
+    robot: ArticulationCfg = ARTI_H1_CFG.replace(
+        prim_path="/World/envs/env_.*/Robot",
+        actuators={
+            "body": ImplicitActuatorCfg(
+                joint_names_expr=[".*"],
+                stiffness=ARTI_H1_JOINT_STIFFNESS,
+                damping=ARTI_H1_JOINT_DAMPING,
+                # 2.x effort_limit (implicit: rated and solver limit) / velocity_limit_sim, under the 3.x names
+                actuator_effort_limit=ARTI_H1_JOINT_EFFORT_LIMIT,
+                joint_effort_limit=ARTI_H1_JOINT_EFFORT_LIMIT,
+                joint_velocity_limit=ARTI_H1_JOINT_VELOCITY_LIMIT,
+            ),
+        },
+    )
+
+    terrain: TerrainImporterCfg = TerrainImporterCfg(
+        prim_path="/World/ground",
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.PhysxRigidBodyMaterialCfg(
+            friction_combine_mode="average",
+            restitution_combine_mode="average",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        ),
+        debug_vis=False,
+    )
+
+    # MTi-3 sensor (the 2.x full-state Imu is Pva in 3.x). Filled in from the env cfg imu_* fields by
+    # ArtiH1AmpEnv.__init__ so that CLI overrides of those fields still take effect; None = no sensor.
+    mti3_imu: PvaCfg | None = None
+
+    light = AssetBaseCfg(
+        prim_path="/World/Light", spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+    )
 
 
 @configclass
@@ -531,45 +607,12 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 240,
         render_interval=decimation,
-        physx=sim_utils.PhysxCfg(
-            solver_type=1,
-            bounce_threshold_velocity=0.2,
-        ),
+        physics=ArtiH1PhysicsCfg(),
     )
 
-    robot: ArticulationCfg = ARTI_H1_CFG.replace(
-        prim_path="/World/envs/env_.*/Robot",
-        actuators={
-            "body": ImplicitActuatorCfg(
-                joint_names_expr=[".*"],
-                stiffness=ARTI_H1_JOINT_STIFFNESS,
-                damping=ARTI_H1_JOINT_DAMPING,
-                effort_limit=ARTI_H1_JOINT_EFFORT_LIMIT,
-                velocity_limit_sim=ARTI_H1_JOINT_VELOCITY_LIMIT,
-            ),
-        },
-    )
-
-    terrain: TerrainImporterCfg = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="plane",
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="average",
-            restitution_combine_mode="average",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        debug_vis=False,
-    )
-
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=4096,
-        env_spacing=1.0,
-        replicate_physics=True,
-        clone_in_fabric=False,
-    )
+    # robot, terrain, IMU and light live in ArtiH1SceneCfg. 2.x replicate_physics=True / clone_in_fabric=False:
+    # the first is deprecated and ignored in 3.x, the second was removed.
+    scene: ArtiH1SceneCfg = ArtiH1SceneCfg(num_envs=4096, env_spacing=1.0)
 
     events: ArtiH1EventCfg = ArtiH1EventCfg()
 

@@ -26,35 +26,29 @@ _IMU_SENSOR_COMMAND_NAMES = (
 )
 
 
-def create_mti3_lab_imu_sensor(cfg):
+def make_mti3_pva_cfg(cfg):
+    """Isaac Lab sensor config for the MTi-3 (imu_backend == "isaaclab"), or None.
+
+    The Isaac Lab 2.x full-state ``Imu`` (quat_w, ang_vel_b, lin_acc_b) is ``Pva`` in 3.x; the new ``Imu`` has no
+    orientation. ``gravity_bias`` was removed (Pva acceleration excludes gravity); the accelerometer reading is not
+    part of any observation.
+    """
     if not getattr(cfg, "use_isaac_imu_sensor", False):
         return None
     if getattr(cfg, "imu_backend", "isaaclab") != "isaaclab":
         return None
 
-    try:
-        from isaaclab.sensors import ImuCfg
-    except Exception:
-        return None
+    from isaaclab.sensors import PvaCfg
 
     body = getattr(cfg, "imu_body", "trunk")
-    prim_path = getattr(cfg, "imu_prim_path", f"/World/envs/env_.*/Robot/{body}")
-    update_period = getattr(cfg, "imu_sensor_period_s", 0.0)
-    translation = getattr(cfg, "imu_translation", (0.0, 0.0, 0.0))
-    orientation = getattr(cfg, "imu_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
-    gravity_bias = (0.0, 0.0, 9.81) if getattr(cfg, "imu_read_gravity", True) else (0.0, 0.0, 0.0)
-
-    imu_cfg = ImuCfg(
-        prim_path=prim_path,
-        update_period=update_period,
-        offset=ImuCfg.OffsetCfg(pos=translation, rot=orientation),
-        gravity_bias=gravity_bias,
+    w, x, y, z = getattr(cfg, "imu_orientation_wxyz", (1.0, 0.0, 0.0, 0.0))
+    return PvaCfg(
+        prim_path=getattr(cfg, "imu_prim_path", f"/World/envs/env_.*/Robot/{body}"),
+        update_period=getattr(cfg, "imu_sensor_period_s", 0.0),
+        # Isaac Lab 3.x quaternions are (x, y, z, w)
+        offset=PvaCfg.OffsetCfg(pos=getattr(cfg, "imu_translation", (0.0, 0.0, 0.0)), rot=(x, y, z, w)),
         debug_vis=getattr(cfg, "imu_debug_vis", False),
     )
-    try:
-        return imu_cfg.class_type(imu_cfg)
-    except Exception:
-        return None
 
 
 def create_mti3_imu_sensor_prims(cfg, num_envs: int) -> list[str]:
@@ -284,7 +278,8 @@ class Mti3ImuModel:
         if self.lab_imu_sensor is not None:
             try:
                 orientation_quat_xyzw, gyro_b, accel_b = self._read_lab_imu_values()
-            except Exception:
+            except Exception as error:
+                print(f"[WARN] MTi-3: Isaac Lab sensor read failed ({error!r}); using the pelvis body state", flush=True)
                 self.lab_imu_sensor = None
                 orientation_quat_xyzw, gyro_b, accel_b = self._read_tensor_fallback_values(robot_data, imu_body_index)
         elif self.using_isaac_sensor:
@@ -319,19 +314,19 @@ class Mti3ImuModel:
         robot_data,
         imu_body_index: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        orientation_quat_wxyz = robot_data.body_quat_w[:, imu_body_index]
-        orientation_quat_xyzw = orientation_quat_wxyz[:, [1, 2, 3, 0]]
-        angular_velocity_w = robot_data.body_ang_vel_w[:, imu_body_index]
+        # Isaac Lab 3.x body quaternions are already (x, y, z, w)
+        orientation_quat_xyzw = robot_data.body_quat_w.torch[:, imu_body_index]
+        angular_velocity_w = robot_data.body_ang_vel_w.torch[:, imu_body_index]
         gyro_b = self._quat_rotate_inverse(orientation_quat_xyzw, angular_velocity_w)
         accel_b = torch.zeros_like(gyro_b)
         return orientation_quat_xyzw, gyro_b, accel_b
 
     def _read_lab_imu_values(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         imu_data = self.lab_imu_sensor.data
-        orientation_quat_wxyz = imu_data.quat_w.to(device=self.device, dtype=torch.float32)
-        gyro_b = imu_data.ang_vel_b.to(device=self.device, dtype=torch.float32)
-        accel_b = imu_data.lin_acc_b.to(device=self.device, dtype=torch.float32)
-        return orientation_quat_wxyz[:, [1, 2, 3, 0]], gyro_b, accel_b
+        orientation_quat_xyzw = imu_data.quat_w.torch.to(device=self.device, dtype=torch.float32)
+        gyro_b = imu_data.ang_vel_b.torch.to(device=self.device, dtype=torch.float32)
+        accel_b = imu_data.lin_acc_b.torch.to(device=self.device, dtype=torch.float32)
+        return orientation_quat_xyzw, gyro_b, accel_b
 
     def _read_isaac_sensor_values(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         orientations = []

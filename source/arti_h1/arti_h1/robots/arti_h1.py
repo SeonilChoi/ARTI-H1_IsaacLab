@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 
+from isaaclab_newton.sim.schemas import NewtonArticulationCfg
+from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxCollisionCfg, PhysxRigidBodyCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
@@ -91,7 +94,9 @@ ARTI_H1_CFG = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/Robot",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ISAACLAB_ASSETS_DIR}/models/arti_h1/arti_h1/arti_h1.usd",
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+        # Isaac Lab 3.x schema fragments: the PhysX values are the 2.x RigidBody/Collision/ArticulationRootPropertiesCfg
+        # values unchanged; the Newton fragment only mirrors enabled_self_collisions=False.
+        rigid_props=PhysxRigidBodyCfg(
             disable_gravity=False,
             linear_damping=0.0,
             angular_damping=0.0,
@@ -100,17 +105,20 @@ ARTI_H1_CFG = ArticulationCfg(
             max_depenetration_velocity=10.0,
             enable_gyroscopic_forces=True,
         ),
-        collision_props=sim_utils.CollisionPropertiesCfg(
+        collision_props=PhysxCollisionCfg(
             contact_offset=0.02,
             rest_offset=0.0,
         ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
-            solver_position_iteration_count=4,
-            solver_velocity_iteration_count=4,
-            sleep_threshold=0.005,
-            stabilization_threshold=0.001,
-        ),
+        articulation_props=[
+            PhysxArticulationCfg(
+                enabled_self_collisions=False,
+                solver_position_iteration_count=4,
+                solver_velocity_iteration_count=4,
+                sleep_threshold=0.005,
+                stabilization_threshold=0.001,
+            ),
+            NewtonArticulationCfg(self_collision_enabled=False),
+        ],
         copy_from_source=True,
     ),
     init_state=ArticulationCfg.InitialStateCfg(
@@ -123,8 +131,10 @@ ARTI_H1_CFG = ArticulationCfg(
             joint_names_expr=[".*"],
             stiffness=JOINT_STIFFNESS,
             damping=JOINT_DAMPING,
-            effort_limit=JOINT_EFFORT_LIMIT,
-            velocity_limit_sim=JOINT_VELOCITY_LIMIT,
+            # 2.x effort_limit (implicit: rated and solver limit) / velocity_limit_sim, under the 3.x names
+            actuator_effort_limit=JOINT_EFFORT_LIMIT,
+            joint_effort_limit=JOINT_EFFORT_LIMIT,
+            joint_velocity_limit=JOINT_VELOCITY_LIMIT,
         ),
     },
 )
