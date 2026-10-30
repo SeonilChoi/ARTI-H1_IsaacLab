@@ -34,6 +34,7 @@ parser.add_argument("--no_com_dr", action="store_true", help="disable the pelvis
 parser.add_argument("--save_obs_stats", type=str, default=None, help="npz with per-dim obs min / max / mean / std")
 parser.add_argument("--save_log", type=str, default=None,
                     help="write env 0 as a humanoid_controller runtime log (ARTI-H1 log_file format)")
+parser.add_argument("--physics", type=str, default="isaacsim_physx", help="physics preset: isaacsim_physx | newton_mjwarp")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 app_launcher = AppLauncher(args_cli)
@@ -43,14 +44,16 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 import isaaclab_tasks  # noqa: F401,E402
-from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
+from isaaclab_tasks.utils import resolve_task_config  # noqa: E402
 from isaaclab.utils.math import quat_apply_inverse  # noqa: E402
 
 import arti_h1.tasks  # noqa: F401,E402
 
 TASK = "Template-Arti-H1-Amp-Direct-v0"
 
-cfg = parse_env_cfg(TASK, num_envs=args_cli.num_envs, use_fabric=True)
+cfg = resolve_task_config(TASK, None, overrides=[f"physics={args_cli.physics}"])[0]
+
+cfg.scene.num_envs = args_cli.num_envs
 cfg.balance_support_kp = 0.0
 cfg.early_termination = False
 cfg.uniform_action_scale = 0.0

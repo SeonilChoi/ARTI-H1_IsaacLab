@@ -18,5 +18,5 @@ $PY -u scripts/skrl/play.py --task Template-Arti-H1-Amp-Direct-v0 --algorithm AM
     --num_envs 4 --video "$VIDEO_SOURCE" --video_length 2400 --video_width 1280 --video_height 720 \
     physics="$PHYSICS" "$@" \
     > "logs/tuning/video_$NAME.log" 2>&1
-MP4=$(ls -t "$RUN_DIR"/videos/play/*.mp4 2>/dev/null | head -1)
+MP4=$(ls -S "$RUN_DIR"/videos/play/*.mp4 2>/dev/null | head -1)  # largest = the full 40 s episode (a short 2nd clip follows)
 if [ -n "$MP4" ]; then cp "$MP4" "logs/tuning/videos/$NAME.mp4" && echo "saved logs/tuning/videos/$NAME.mp4" && $PY scripts/tuning/video_blank_check.py "logs/tuning/videos/$NAME.mp4"; else echo "NO VIDEO (see logs/tuning/video_$NAME.log)"; fi
