@@ -21,12 +21,15 @@ if num > len(cmds):
                          for dth in fine(b["dth_bounds"])) if c not in coarse]
     rng = np.random.default_rng(0)
     cmds += [extra[i] for i in rng.choice(len(extra), num - len(cmds), replace=False)]
-# (0, 0, 0) is the standing clip (make_stand_clip.py), not stepping in place
-cmds = [c for c in cmds if any(c)][:num]
-seen = set(cmds)
+cmds = cmds[:num]
+seen = {c for c in cmds if any(c)}
 script = f"{root}/src/motion_generator/gait_generator.py"
 def run(i):
     dx, dy, dth = cmds[i]
+    # (0, 0, 0) is the standing clip (make_stand_clip.py), not stepping in place: skip it but keep its index, so the
+    # other clips keep the indices of the shipped set (arti_h1 1000: no 202.json)
+    if not any(cmds[i]):
+        return
     out = f"{root}/data/{robot}/{i}.json"
     if os.path.isfile(out):
         return
