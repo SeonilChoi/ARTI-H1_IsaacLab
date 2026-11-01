@@ -36,6 +36,13 @@ python scripts/skrl/train.py --task Template-Arti-H1-Amp-Direct-v0 physics=isaac
 
 - Output: `logs/skrl/arti_h1_amp_walk/<date>_amp_torch/` (checkpoints, `params/env.yaml`, `params/agent.yaml`).
 - Resume: add `--checkpoint <agent_N.pt> env.curriculum_step_offset=N` (or `--checkpoint latest`).
+- Stage 2 (walk at the commanded speed): warm start a converged stage-1 checkpoint on the fine-tune task
+  (`ArtiH1AmpFinetuneEnvCfg`: signed progress 0.3, linear tracking sigma 0.0005, curricula already finished, 600k steps):
+
+  ```bash
+  isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 --num_envs 8192 \
+      --checkpoint server/agent_1365000.pt
+  ```
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
 Setup:
