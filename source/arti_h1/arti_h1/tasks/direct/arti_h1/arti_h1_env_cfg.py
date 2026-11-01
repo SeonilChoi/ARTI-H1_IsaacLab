@@ -642,3 +642,24 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     dt = 1 / 240 * 4
     motion_folder_path = os.path.join(ISAACLAB_ASSETS_DIR, "motions", "arti_h1")
 ArtiH1EnvCfg = ArtiH1AmpEnvCfg
+
+
+@configclass
+class ArtiH1AmpFinetuneEnvCfg(ArtiH1AmpEnvCfg):
+    """Stage 2: warm start from a converged stage-1 checkpoint to walk at the commanded speed.
+
+    Server PhysX run (fresh, default cfg) agent_1365000, eval 11-01: 0 falls, sole width 121 mm, roll range 5 deg, but
+    1 cm steps (reference 3-4 cm at the 1.5 s cycle), so forward / backward / side tracking reached only 36 / 24 / 45 %
+    of the command (turning 100 %). Rollout reward terms: linear tracking already paid 0.38 of its 0.5 at that speed
+    and signed progress only 0.025, so longer steps were not worth the torque / power / joint-speed cost.
+    Train with --checkpoint <stage-1 agent_N.pt> (all curricula already finished, see curriculum_step_offset).
+    """
+
+    # Old run10 recipe (see signed_progress_reward_scale): 0.1 for a fresh start, 0.3 once both feet lift.
+    signed_progress_reward_scale = 0.3
+    # 0.001 -> 0.0005: walking at 36 % of a 0.04 m/s command now earns 0.26 instead of 0.51 of the linear term, a
+    # perfect replay still ~0.86 (ripple error ~7.6e-5). The angular term already tracks, keep 0.001.
+    linear_velocity_tracking_sigma = 0.0005
+    # A warm start restarts common_step_counter at 0: start past every curriculum (support fade ends at 600k,
+    # torque at 500k, regularization at 300k) so the stage-1 conditions continue unchanged.
+    curriculum_step_offset = 1_000_000
