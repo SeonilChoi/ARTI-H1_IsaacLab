@@ -24,6 +24,24 @@ from isaaclab_tasks.utils import PresetCfg
 
 
 ARTI_H1_NUM_JOINTS = 12
+# Joint order of the policy's actions and of the joint blocks in the policy / AMP observations. This is the PhysX
+# articulation order (left / right interleaved) that every checkpoint, scripts/pt_to_onnx.py (ISAAC_JOINT_NAMES) and the
+# robot's humanoid_controller use. Newton builds the articulation per leg (left chain, then right chain), so the env maps
+# between this order and robot.data.joint_names instead of exposing the backend's order to the policy.
+ARTI_H1_POLICY_JOINT_NAMES = (
+    "left_hip_yaw",
+    "right_hip_yaw",
+    "left_hip_roll",
+    "right_hip_roll",
+    "left_hip_pitch",
+    "right_hip_pitch",
+    "left_knee",
+    "right_knee",
+    "left_ankle_pitch",
+    "right_ankle_pitch",
+    "left_ankle_roll",
+    "right_ankle_roll",
+)
 ARTI_H1_AMP_OBSERVATION_SPACE = 1 + 6 + 3 + 3 + ARTI_H1_NUM_JOINTS * 6 + ARTI_H1_NUM_JOINTS + 3 + 3
 # Trailing `+ ARTI_H1_NUM_JOINTS` is the previous (clamped) action, fed back to the policy.
 ARTI_H1_POLICY_OBSERVATION_SPACE = 6 + 3 + ARTI_H1_NUM_JOINTS * 6 + ARTI_H1_NUM_JOINTS + 3 + 3 + ARTI_H1_NUM_JOINTS
@@ -286,6 +304,8 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     episode_length_s = 15.0
 
     action_space = ARTI_H1_NUM_JOINTS
+    # Backend-independent joint order of the policy I/O (see ARTI_H1_POLICY_JOINT_NAMES).
+    policy_joint_names = ARTI_H1_POLICY_JOINT_NAMES
     # + gait clock (sin, cos) + commands (3, always last)
     observation_space = ARTI_H1_POLICY_OBSERVATION_SPACE + 2 + 3
     # Asymmetric critic: policy observation + privileged terms (see ArtiH1AmpEnv._get_critic_state).

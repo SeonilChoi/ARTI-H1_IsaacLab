@@ -36,7 +36,8 @@ try:
     env = gym.make("Template-Arti-H1-Amp-Direct-v0", cfg=cfg); u = env.unwrapped
     ref = u.nominal_gait_reference.clone(); cmd = ref.clone(); bins = ref.shape[0]
     if args.resume and os.path.isfile(out_file):
-        cmd = torch.tensor(np.load(out_file), dtype=torch.float32, device=u.device)
+        # the file is in the policy joint order; the env table is in the backend order
+        cmd = torch.tensor(np.load(out_file), dtype=torch.float32, device=u.device)[:, u.sim_joint_ids_from_policy]
     names = u.robot.data.joint_names
     zero = torch.zeros(u.num_envs, 12, device=u.device)
     for it in range(args.iters + 1):
@@ -63,7 +64,7 @@ try:
             cmd = cmd + args.gain * err
             lo = u._joint_pos_lower[0] - u.robot.data.default_joint_pos.torch[0]; hi = u._joint_pos_upper[0] - u.robot.data.default_joint_pos.torch[0]
             cmd = torch.max(torch.min(cmd, hi), lo)
-    np.save(out_file, cmd.cpu().numpy())
+    np.save(out_file, cmd[:, u.policy_joint_ids].cpu().numpy())  # policy joint order (pt_to_onnx.py / robot)
     print(f"[ILC] saved {out_file}", flush=True)
 except Exception:
     import traceback; traceback.print_exc()

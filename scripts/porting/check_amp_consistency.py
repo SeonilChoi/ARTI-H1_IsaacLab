@@ -66,8 +66,8 @@ with launch_simulation(cfg, args):
         ori,
         lin,
         ang,
-        u.motion_loader.vectorize_joint_positions(d.joint_pos.torch),
-        d.joint_vel.torch,
+        u._joint_vec6_to_policy(u.motion_loader.vectorize_joint_positions(d.joint_pos.torch)),
+        u._joints_to_policy(d.joint_vel.torch),
         local_toes[:, 0],
         local_toes[:, 1],
     )
