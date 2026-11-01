@@ -31,26 +31,66 @@ isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=i
 python scripts/skrl/train.py --task Template-Arti-H1-Amp-Direct-v0 physics=isaacsim_physx
 ```
 
-Server (Newton, in a tmux session):
+### Server (Isaac Sim PhysX, tmux)
+
+Two training modes on the same environment and rewards:
+
+| mode | task | agent cfg | log dir |
+|---|---|---|---|
+| imitation + RL (AMP: style reward from the reference motions) | `Template-Arti-H1-Amp-Direct-v0` | `skrl_amp_cfg.yaml` | `logs/skrl/arti_h1_amp_walk/<date>_amp_torch/` |
+| RL only (PPO: task rewards only, no discriminator) | `Template-Arti-H1-Direct-v0` | `skrl_ppo_cfg.yaml` | `logs/skrl/arti_h1_ppo_walk/<date>_ppo_torch/` |
+
+Both use the same actor / asymmetric critic and hyperparameters; the policy is a residual on the nominal gait table in
+both. Each terminal (tmux session) starts with:
 
 ```bash
-tmux new -s h1
 source /opt/isaac/IsaacLab-main/.venv/bin/activate
 cd /opt/isaac/projects/arti_h1
-isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=newton_mjwarp --num_envs 8192
+git pull origin server
+export OMNI_KIT_ACCEPT_EULA=yes
+```
+
+Imitation + RL (AMP), terminal 1:
+
+```bash
+tmux new -s h1-amp
+isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=isaacsim_physx --num_envs 8192
+# stage 2 (walk at the commanded speed), warm start from a converged stage-1 checkpoint:
+isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 physics=isaacsim_physx --num_envs 8192 \
+    --checkpoint <stage-1 agent_N.pt>
+```
+
+RL only (PPO), terminal 2:
+
+```bash
+tmux new -s h1-ppo
+isaaclab train --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacsim_physx --num_envs 8192
+```
+
+Play over WebRTC livestream (Kit viewer; connect with the Isaac Sim WebRTC Streaming Client to the server IP).
+`--checkpoint latest` loads the newest checkpoint of that task's log dir; pass a path (`.../checkpoints/agent_N.pt`)
+for a specific one. Stop the viewer with Ctrl+C.
+
+```bash
+# imitation + RL (AMP)
+isaaclab play --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=isaacsim_physx \
+    --num_envs 16 --checkpoint latest --viz kit --livestream 2
+# RL only (PPO)
+isaaclab play --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacsim_physx \
+    --num_envs 16 --checkpoint latest --viz kit --livestream 2
 ```
 
 - Physics: `physics=isaacsim_physx` (default, the original PhysX settings), `physics=newton_mjwarp`
   (Newton / MuJoCo-Warp), `physics=newton_kamino` (untuned stub). Add `--viz newton_gl` (or `--viz kit`) to watch.
 
-- Output: `logs/skrl/arti_h1_amp_walk/<date>_amp_torch/` (checkpoints, `params/env.yaml`, `params/agent.yaml`).
+- Output: `logs/skrl/arti_h1_amp_walk/<date>_amp_torch/` (PPO: `arti_h1_ppo_walk/<date>_ppo_torch/`; checkpoints, `params/env.yaml`, `params/agent.yaml`).
 - Resume: add `--checkpoint <agent_N.pt> env.curriculum_step_offset=N` (or `--checkpoint latest`).
 - Stage 2 (walk at the commanded speed): warm start a converged stage-1 checkpoint on the fine-tune task
   (`ArtiH1AmpFinetuneEnvCfg`: signed progress 0.3, linear tracking sigma 0.0005, curricula already finished, 600k steps):
 
   ```bash
-  isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 --num_envs 8192 \
-      --checkpoint server/agent_1365000.pt
+  isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 physics=isaacsim_physx \
+      --num_envs 8192 --checkpoint server/agent_1365000.pt
   ```
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
@@ -71,15 +111,6 @@ python -u scripts/tuning/eval_gait.py --mode sequence --checkpoint <pt> --num_en
 PY=<isaac lab python> bash scripts/tuning/record_video.sh <pt> <name>    # 40 s video with pushes
 python scripts/pt_to_onnx.py --checkpoint <pt> --output policy.onnx
 python -u scripts/tuning/verify_onnx.py <pt> policy.onnx
-```
-
-Watch a policy in the Kit viewer over WebRTC livestream (`--livestream 2`; open it with the Isaac Sim WebRTC Streaming
-Client):
-
-```bash
-cd /opt/isaac/projects/arti_h1
-isaaclab play --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=newton_mjwarp \
-  --num_envs 16 --checkpoint latest --viz kit --livestream 2
 ```
 
 humanoid_controller `robot.yaml` policy settings for this setup: `gait_phase_rate: 0.66667`, `initial_gait_phase: 0.927`,
