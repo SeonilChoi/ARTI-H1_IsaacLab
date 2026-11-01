@@ -75,6 +75,8 @@ PLAY_SEQUENCE = [
 # Lateral sole-centre distance (left - right, along the heading's left axis) over every metered step, all segments.
 # Self-collisions are off in sim, so the soles (9 cm wide) can overlap below 0.09 m without any contact.
 WIDTHS = []
+WIDTH_SEGS = []  # segment index of each WIDTHS entry (sequence mode; -1 elsewhere)
+CUR_SEG = [-1]
 
 
 def width_report(tag):
@@ -83,6 +85,13 @@ def width_report(tag):
     w = torch.cat(WIDTHS)
     print(f"[WIDTH] {tag} lateral sole distance mean {w.mean()*1000:.1f} p5 {torch.quantile(w, 0.05)*1000:.1f} "
           f"min {w.min()*1000:.1f} mm | time < 90 mm (soles overlap) {100*(w < 0.09).float().mean():.2f}%")
+    if tag == "sequence" and all(len(x) == len(WIDTHS[0]) for x in WIDTHS):
+        ws, sg = torch.stack(WIDTHS), torch.tensor(WIDTH_SEGS)
+        for j in sorted(set(WIDTH_SEGS)):
+            wj = ws[sg == j]
+            if (wj < 0.09).any():
+                print(f"[WIDTH]   segment {j+1} {PLAY_SEQUENCE[j][0]}: min {wj.min()*1000:.1f} mm, overlap {100*(wj < 0.09).float().mean():.2f}% "
+                      f"of the time, envs with overlap {int((wj < 0.09).any(0).sum())}/{wj.shape[1]}")
 
 
 class StepMeter:
@@ -169,6 +178,7 @@ class StepMeter:
             lat = torch.stack((-head[:, 1], head[:, 0]), dim=-1)
             wd = ((feet[:, 0, :2] - feet[:, 1, :2]) * lat).sum(-1)
             WIDTHS.append(wd[active] if active is not None else wd)
+            WIDTH_SEGS.append(CUR_SEG[0])
             for foot in (0, 1):
                 td = contact[:, foot] & ~self.prev[:, foot]
                 if active is not None:
@@ -459,6 +469,7 @@ def main():
         with torch.inference_mode():
             for k in range(seg_steps * len(PLAY_SEQUENCE)):
                 j = k // seg_steps
+                CUR_SEG[0] = j
                 if k % seg_steps == 0:
                     meter = StepMeter(uenv)
                     nj = len(uenv.robot.data.joint_names)

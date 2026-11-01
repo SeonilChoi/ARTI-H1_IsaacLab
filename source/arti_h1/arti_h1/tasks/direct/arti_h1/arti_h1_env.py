@@ -1005,7 +1005,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self._foot_stagger_reward = torch.abs(self.foot_stagger_ema) * self.cfg.foot_stagger_reward_scale
         # Lateral sole-centre distance (left - right): the feet must not cross or overlap (no self-collisions in sim).
         self._foot_width = local_feet[:, 0, 1] - local_feet[:, 1, 1]
-        self._foot_width_reward = torch.clamp(self.cfg.foot_min_width - self._foot_width, min=0.0) * self.cfg.foot_width_reward_scale
+        self._foot_width_reward = (
+            torch.clamp(self.cfg.foot_min_width - self._foot_width, min=0.0) * self.cfg.foot_width_reward_scale
+            + (self._foot_width < 2 * self.cfg.foot_sole_half_width).float() * self.cfg.foot_overlap_reward_scale
+        )
 
         # Step-length symmetry, paid at each touchdown: |step_k - step_(k-1)| where step = (touching sole -
         # other sole) along the heading. A symmetric gait alternates equal steps, so this is 0 there.
