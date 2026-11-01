@@ -52,3 +52,16 @@ gym.register(
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_amp_finetune_cfg.yaml",
     },
 )
+
+# Stage 3: warm start from a stage-2 checkpoint, real-robot joint lag randomisation (ArtiH1AmpSim2RealEnvCfg).
+gym.register(
+    id="Template-Arti-H1-Amp-Sim2Real-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_env:ArtiH1AmpEnv",
+    disable_env_checker=True,
+    kwargs={
+        **_ARTI_H1_AMP_KWARGS,
+        "env_cfg_entry_point": f"{__name__}.arti_h1_env_cfg:ArtiH1AmpSim2RealEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_finetune_cfg.yaml",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_amp_finetune_cfg.yaml",
+    },
+)

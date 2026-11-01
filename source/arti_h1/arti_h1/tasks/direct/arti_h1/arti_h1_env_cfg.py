@@ -355,6 +355,10 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # run32: wider towards a faster / less damped joint (the real ankles reacted ~2x faster than the sim on the
     # first steps of the 10-24 robot walk).
     actuator_delay_jitter_ms = (-8.0, 5.0)
+    # Extra per-env lag (ms) per joint type, uniform(0, x) on top of the delay above, resampled at every reset; {} = off.
+    # Ramped 0 -> 1 over actuator_delay_extra_curriculum_steps (common_step_counter + curriculum_step_offset).
+    actuator_delay_extra_ms: dict = {}
+    actuator_delay_extra_curriculum_steps = (0, 0)
     actuator_armature_scale_range = (0.3, 1.3)
     actuator_coulomb_scale_range = (0.3, 1.5)
     # Gaussian noise (rad/s) on the policy joint velocity obs [81:93]; 0 = off (run31 and before).
@@ -459,6 +463,13 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # vs reference 23 deg/s and looked stiff; the noise floor now costs only ~-0.002.
     # run32: -0.1 -> -0.25 (run31 joint speeds crept up again: fwd knee 94/110 -> 113/125 deg/s by 195k).
     action_rate_reward_scale = -0.75
+    # 11-01: action_rate is paid on the executed (clamped to +-1) actions. On the raw policy output, a hard push sent
+    # the fine-tune agent_305000 mean actions to +-70 for a few steps (clamped in the PD target anyway) and single
+    # env steps paid action_rate -500..-2700 (normal ~-0.03), outliers that swamp the value targets.
+    # The out-of-range term instead pulls the raw output back inside the executable range: scale * min(sum(relu(|a| -
+    # 1)), cap) per step, so it is bounded (-1 at the cap) and costs nothing inside +-1.
+    action_out_of_range_reward_scale = -0.05
+    action_out_of_range_cap = 20.0
     alive_reward_scale = 0.1
     motion_time_scale = 1.0
     cycle_reference_motions = False
@@ -663,3 +674,24 @@ class ArtiH1AmpFinetuneEnvCfg(ArtiH1AmpEnvCfg):
     # A warm start restarts common_step_counter at 0: start past every curriculum (support fade ends at 600k,
     # torque at 500k, regularization at 300k) so the stage-1 conditions continue unchanged.
     curriculum_step_offset = 1_000_000
+
+
+@configclass
+class ArtiH1AmpSim2RealEnvCfg(ArtiH1AmpFinetuneEnvCfg):
+    """Stage 3: warm start from a stage-2 checkpoint and learn to walk with the real robot's joint lag.
+
+    Real walk logs (10-24/10-28) lag q_des by ~33 ms more than the sim model on ankle_pitch and ~50-70 ms more on
+    hip_roll (L6 notes); with that lag plus a compliant contact the sim reproduced the real 9-11 deg pitch rocking
+    (sim 2.5 deg). Probe 11-01 of fine-tune agent_305000 (64 env x 25 s, cmd 0.04, PhysX):
+      nominal lag:                 roll-rate rms 12.5, pitch-rate rms  7.8 deg/s, power  6.5 W, reward 1.45, 0 falls
+      hip_roll 65 / ankle_pitch 35: roll-rate rms 30.9, pitch-rate rms 13.5 deg/s, power 12.4 W, reward 0.23, 1 fall
+      + 2e4 N/m soft contact:       roll-rate rms 29.3, pitch-rate rms 17.3 deg/s, power 12.9 W, reward -0.39, 3 falls
+    i.e. the policy relies on fast hip_roll / ankle_pitch response it will not get on the robot. Lag is
+    randomised from 0 (old model) to the measured maximum so the robot's actual lag is inside the range.
+    L6 (10-29) applied the full lag at once to a warm start and doubled the power within 40k steps: here it ramps
+    in over the first 200k steps of the run.
+    """
+
+    actuator_delay_extra_ms = {"hip_roll": 50.0, "ankle_pitch": 25.0}
+    # curriculum_step_offset is 1M (inherited): ramp over run steps 0 -> 200k.
+    actuator_delay_extra_curriculum_steps = (1_000_000, 1_200_000)

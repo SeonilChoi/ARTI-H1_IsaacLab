@@ -58,6 +58,9 @@ isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=i
 # stage 2 (walk at the commanded speed), warm start from a converged stage-1 checkpoint:
 isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 physics=isaacsim_physx --num_envs 8192 \
     --checkpoint <stage-1 agent_N.pt>
+# stage 3 (sim-to-real: the real robot's joint lag, ramped in over the first 200k steps), warm start from stage 2:
+isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Sim2Real-Direct-v0 physics=isaacsim_physx --num_envs 8192 \
+    --checkpoint <stage-2 agent_N.pt>
 ```
 
 RL only (PPO), terminal 2:
@@ -92,6 +95,9 @@ isaaclab play --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacs
   isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 physics=isaacsim_physx \
       --num_envs 8192 --checkpoint server/agent_1365000.pt
   ```
+- Stage 3 (`ArtiH1AmpSim2RealEnvCfg`): stage 2 plus a per-env extra joint lag uniform(0, 50 ms) on hip_roll and
+  uniform(0, 25 ms) on ankle_pitch, resampled at every reset and ramped in over 200k steps (the real walk logs lag
+  that much more than the sim model; TensorBoard `Sim2Real/extra_delay_ms_mean`). 600k steps.
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
 Setup:

@@ -385,8 +385,14 @@ class ArtiH1AmpEnv(DirectRLEnv):
         sim_dt = self.cfg.sim.dt
         lo, hi = self.cfg.actuator_delay_jitter_ms
         delay_ms = per_joint(self.cfg.actuator_delay_ms)[None, :] + torch.empty(n, 1, device=self.device).uniform_(lo, hi)
-        self.actuator_delay_steps = torch.clamp(torch.round(delay_ms.clamp_min(0.0) / 1000.0 / sim_dt), min=0).long()
-        self.actuator_buffer = torch.zeros(int(self.actuator_delay_steps.max().item()) + 1, n, len(names), device=self.device)
+        self.actuator_base_delay_ms = delay_ms.clamp_min(0.0)
+        # Extra per-env lag (cfg.actuator_delay_extra_ms, resampled at every reset): room for its maximum in the buffer.
+        extra = {k: 0.0 for k in self.cfg.actuator_delay_ms}
+        extra.update(self.cfg.actuator_delay_extra_ms or {})
+        self.actuator_delay_extra_max_ms = per_joint(extra)[None, :]
+        max_ms = (self.actuator_base_delay_ms + self.actuator_delay_extra_max_ms).max().item()
+        self.actuator_delay_steps = torch.clamp(torch.round(self.actuator_base_delay_ms / 1000.0 / sim_dt), min=0).long()
+        self.actuator_buffer = torch.zeros(int(round(max_ms / 1000.0 / sim_dt)) + 2, n, len(names), device=self.device)
         self.actuator_buffer_head = 0
         lo, hi = self.cfg.actuator_armature_scale_range
         armature = per_joint(self.cfg.actuator_armature)[None, :] * torch.empty(n, 1, device=self.device).uniform_(lo, hi)
@@ -397,6 +403,22 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.actuator_q_stick = torch.zeros(n, len(names), device=self.device)
         print(f"[INFO] actuator model: delay {self.actuator_delay_steps.float().mean().item() * sim_dt * 1000:.1f} ms mean, "
               f"armature {self.cfg.actuator_armature}, coulomb {self.cfg.actuator_coulomb}", flush=True)
+
+    def _resample_actuator_delay(self, env_ids: torch.Tensor):
+        """Per-env extra joint lag uniform(0, scale * cfg.actuator_delay_extra_ms) on top of the start-up delay.
+
+        One draw per joint type and env (both legs share it), new at every reset. scale ramps 0 -> 1 over
+        cfg.actuator_delay_extra_curriculum_steps so a warm-started policy is not hit by the full lag at once.
+        """
+        if not self.cfg.actuator_delay_extra_ms:
+            return
+        scale = self._curriculum_fraction(0.0, self.cfg.actuator_delay_extra_curriculum_steps)
+        names = self.robot.data.joint_names
+        types = sorted({nm.split("_", 1)[1] for nm in names})
+        draw = torch.rand(len(env_ids), len(types), device=self.device)[:, [types.index(nm.split("_", 1)[1]) for nm in names]]
+        delay_ms = self.actuator_base_delay_ms[env_ids] + scale * draw * self.actuator_delay_extra_max_ms
+        steps = torch.round(delay_ms / 1000.0 / self.cfg.sim.dt).long()
+        self.actuator_delay_steps[env_ids] = steps.clamp(0, self.actuator_buffer.shape[0] - 1)
 
     def _apply_actuator_model(self, target: torch.Tensor) -> torch.Tensor:
         """Called every physics step: delay the target, then shift it for Coulomb friction / freeze it when stuck."""
@@ -647,9 +669,14 @@ class ArtiH1AmpEnv(DirectRLEnv):
         )
         # No step_dt factor: at 60 Hz it shrank both penalties by ~60x, leaving the torque
         # term at ~0.003% of the tracking reward and the gait effectively unregularized.
+        # executed actions (the PD target uses clamp(actions, -1, 1)); see cfg.action_out_of_range_reward_scale
         action_rate_reward = (
-            torch.sum(torch.square(self.previous_actions - self.actions), dim=-1)
+            torch.sum(torch.square(torch.clamp(self.previous_actions, -1.0, 1.0) - torch.clamp(self.actions, -1.0, 1.0)), dim=-1)
             * self.cfg.action_rate_reward_scale
+        )
+        action_out_of_range_reward = (
+            torch.clamp(torch.sum(torch.relu(self.actions.abs() - 1.0), dim=-1), max=self.cfg.action_out_of_range_cap)
+            * self.cfg.action_out_of_range_reward_scale
         )
         applied_torque = self.robot.actuators.applied_effort.torch
         torque_scale = self._torque_curriculum_fraction()
@@ -746,6 +773,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             + joint_vel_reward
             + joint_acc_reward
             + action_rate_reward
+            + action_out_of_range_reward
             + symmetry_reward
             + signed_progress_reward
             + feet_air_time_reward
@@ -769,6 +797,9 @@ class ArtiH1AmpEnv(DirectRLEnv):
             + base_sway_reward
         )
         self.extras["log"] = {
+            **({"Sim2Real/extra_delay_ms_mean": (self.actuator_delay_steps.float().mean() * self.cfg.sim.dt * 1000.0
+                                                 - self.actuator_base_delay_ms.mean())}
+               if self.cfg.actuator_model and self.cfg.actuator_delay_extra_ms else {}),
             "Reward/linear_tracking": linear_velocity_reward.mean(),
             "Reward/angular_tracking": angular_velocity_reward.mean(),
             "Reward/torque": torque_reward.mean(),
@@ -778,6 +809,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             "Gait/joint_vel_rms_deg_s": torch.rad2deg(torch.sqrt(joint_vel_sq.mean() / joint_vel_sq.new_tensor(12.0))),
             "Gait/joint_acc_rms": torch.sqrt(joint_acc_sq.mean() / 12.0),
             "Reward/action_rate": action_rate_reward.mean(),
+            "Reward/action_out_of_range": action_out_of_range_reward.mean(),
             "Torque/rms_Nm": torch.sqrt(torch.mean(torch.square(applied_torque))),
             "Torque/max_abs_Nm": torch.abs(applied_torque).max(dim=-1).values.mean(),
             "Torque/joint_power_W": joint_power.mean(),
@@ -1207,6 +1239,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             # the delay line restarts at the reset pose (the policy's first target is default + nominal offset)
             self.actuator_buffer[:, env_ids] = joint_pos.unsqueeze(0)
             self.actuator_stuck[env_ids] = False
+            self._resample_actuator_delay(env_ids)
         self.actions[env_ids] = 0.0
         self.previous_actions[env_ids] = 0.0
         self.velocity_history[env_ids] = root_state[:, 7:].unsqueeze(1).expand(-1, self.average_velocity_steps, -1)
