@@ -79,3 +79,6 @@ tests/
 # Local checkpoint copies
 ckpt_keep/
 logs/porting/
+
+# Isaac Sim WebRTC livestream telemetry (written to the cwd by --livestream)
+NvStreamer-*.etli
