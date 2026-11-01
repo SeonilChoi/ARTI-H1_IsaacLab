@@ -329,6 +329,18 @@ def export_onnx(model: nn.Module, dummy: torch.Tensor, output_path: Path, opset:
         output_names=["actions", "q_des"],
         dynamic_axes=dynamic_axes,
     )
+    # torch 2.11's exporter writes the weights to a separate <output>.onnx.data file; humanoid_controller loads only the
+    # .onnx (a 64 KB graph without weights fails on the robot). Re-save as one self-contained file, IR 8 like the
+    # models already on the robot (ONNX Runtime 1.20).
+    import onnx
+
+    proto = onnx.load(str(output_path))
+    proto.ir_version = min(proto.ir_version, 8)
+    onnx.checker.check_model(proto)
+    onnx.save_model(proto, str(output_path), save_as_external_data=False)
+    data_file = output_path.with_name(output_path.name + ".data")
+    if data_file.is_file():
+        data_file.unlink()
 
 def verify(model: nn.Module, dummy: torch.Tensor, output_path: Path) -> None:
     model.eval()
