@@ -61,6 +61,9 @@ isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Finetune-Direct-v0 
 # stage 3 (sim-to-real: the real robot's joint lag, ramped in over the first 200k steps), warm start from stage 2:
 isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Sim2Real-Direct-v0 physics=isaacsim_physx --num_envs 8192 \
     --checkpoint <stage-2 agent_N.pt>
+# continue a stage-3 run on the current stage-3 cfg (lag ramp already done):
+isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Sim2Real-Direct-v0 physics=isaacsim_physx --num_envs 8192 \
+    --checkpoint <stage-3 agent_N.pt> env.curriculum_step_offset=1200000
 ```
 
 RL only (PPO), terminal 2:
@@ -97,7 +100,8 @@ isaaclab play --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacs
   ```
 - Stage 3 (`ArtiH1AmpSim2RealEnvCfg`): stage 2 plus a per-env extra joint lag uniform(0, 50 ms) on hip_roll and
   uniform(0, 25 ms) on ankle_pitch, resampled at every reset and ramped in over 200k steps (the real walk logs lag
-  that much more than the sim model; TensorBoard `Sim2Real/extra_delay_ms_mean`). 600k steps.
+  that much more than the sim model; TensorBoard `Sim2Real/extra_delay_ms_mean`), sagittal training pushes +-0.30 m/s
+  (other tasks +-0.20). 600k steps.
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
 Setup:
@@ -114,7 +118,8 @@ python scripts/skrl/play.py --task Template-Arti-H1-Amp-Direct-v0 --checkpoint l
     physics=newton_mjwarp --viz newton_gl                                # command sequence with pushes
 python -u scripts/tuning/eval_gait.py --mode sequence --checkpoint <pt> --num_envs 32 --uniform_action_scale 0.0 \
     --motion_folder $M/arti_h1 --nominal_table $M/arti_h1_nominal_gait_command.npy --hip_roll_limit 0.2618
-PY=<isaac lab python> bash scripts/tuning/record_video.sh <pt> <name>    # 40 s video with pushes
+PY=<isaac lab python> bash scripts/tuning/record_video.sh <pt> <name>    # 40 s video with pushes (AMP checkpoint)
+TASK=Template-Arti-H1-Direct-v0 ALGORITHM=PPO PY=<isaac lab python> bash scripts/tuning/record_video.sh <pt> <name>  # PPO
 python scripts/pt_to_onnx.py --checkpoint <pt> --output policy.onnx
 python -u scripts/tuning/verify_onnx.py <pt> policy.onnx
 ```

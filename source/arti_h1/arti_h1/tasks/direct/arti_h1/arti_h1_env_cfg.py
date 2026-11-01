@@ -547,6 +547,10 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # time (distance mean 90 / p5 2 / min -22 mm, soles are 90 mm wide); the reference stays at 146 mean / 115 min mm.
     foot_min_width = 0.115
     foot_width_reward_scale = -20.0
+    # Extra constant penalty per step while the soles overlap (centre distance < 2 * foot_sole_half_width = 90 mm).
+    # 11-02: Sim2Real agent_340000 crossed the feet in 1/32 envs on diagonal -> turn (min -4 mm, ~3 % of a segment);
+    # the linear term above pays only -2.3 even at 0 mm. The real robot's feet collide there (no self-collision in sim).
+    foot_overlap_reward_scale = -1.0
     # Per touchdown: -scale * |step_k - step_(k-1)| (m). A 2 cm alternating gap costs ~-0.045 per control step.
     # -60 left a 0.75 cm forward gap (run 2026-09-24_09-41-10 plateau); -150.
     step_symmetry_reward_scale = -150.0
@@ -695,3 +699,10 @@ class ArtiH1AmpSim2RealEnvCfg(ArtiH1AmpFinetuneEnvCfg):
     actuator_delay_extra_ms = {"hip_roll": 50.0, "ankle_pitch": 25.0}
     # curriculum_step_offset is 1M (inherited): ramp over run steps 0 -> 200k.
     actuator_delay_extra_curriculum_steps = (1_000_000, 1_200_000)
+
+    def __post_init__(self):
+        super().__post_init__()
+        # 11-02: sagittal pushes x +-0.20 -> +-0.30 m/s. Stage-3 agent_340000 still toppled in 7/16 front->back and
+        # 2/16 back->front standing pushes at 0.30 m/s (lateral 0.40: 0/16) and never stepped; training never pushed
+        # it that hard sagittally. Continue a stage-3 run with env.curriculum_step_offset=1200000 (lag ramp done).
+        self.events.push_robot.params["velocity_range"]["x"] = (-0.30, 0.30)
