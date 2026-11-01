@@ -136,7 +136,8 @@ with torch.inference_mode():
         gz = uenv.robot.data.projected_gravity_b.torch[:, 2].clamp(-1.0, 1.0)
         max_tilt = np.maximum(max_tilt, np.degrees(torch.acos(-gz).cpu().numpy()))
         # desired_joint_target = the target before the actuator model (delay / friction) touches it
-        target = getattr(uenv, "desired_joint_target", uenv.robot.actuators.target_command.position.torch).cpu().numpy()
+        target = getattr(uenv, "desired_joint_target", uenv.robot.actuators.target_command.position.torch)
+        target = target[:, [names.index(n) for n in POLICY_ORDER]].cpu().numpy()  # backend order -> ONNX (policy) order
         # Envs that just reset start a new episode and get a fresh target; skip their step.
         live = ~(terminated | truncated).cpu().numpy()
         n_fallen += int((terminated & ~truncated).sum().item())
@@ -144,7 +145,7 @@ with torch.inference_mode():
             err = np.abs(target[live] - q_des[live])
             if err.max() > worst:
                 worst = float(err.max())
-                worst_joint = names[int(err.max(0).argmax())]
+                worst_joint = POLICY_ORDER[int(err.max(0).argmax())]
 print(f"[CHECK-ONNX] {steps} steps x {args_cli.num_envs} envs: max |env joint_pos_target - onnx q_des| = {worst:.2e} rad"
       f" ({worst_joint}), terminations {n_fallen}")
 print(f"[CHECK-ONNX] jitter: mean |action(k) - action(k-1)| {np.mean(dact):.3f}, mean |joint vel| {np.mean(jvel):.2f} rad/s"

@@ -25,6 +25,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
         # The scene is built from cfg.scene in 3.x; add the MTi-3 sensor from the (possibly overridden) imu_* fields.
         setattr(cfg.scene, cfg.imu_sensor_name, make_mti3_pva_cfg(cfg))
         super().__init__(cfg, render_mode, **kwargs)
+        self._init_policy_joint_order()
 
         motion_files = [
             os.path.join(self.cfg.motion_folder_path, filename)
@@ -51,7 +52,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
         if table_file and os.path.isfile(table_file):
             loaded = torch.tensor(np.load(table_file), dtype=torch.float32, device=self.device)
             if loaded.shape == self.nominal_gait_table.shape:
-                self.nominal_gait_table = loaded
+                # the file is in the policy joint order (as pt_to_onnx.py / the robot read it); env tables are backend order
+                self.nominal_gait_table = loaded[:, self.sim_joint_ids_from_policy]
                 print(f"[INFO] Nominal gait command table loaded from {table_file}", flush=True)
 
         if getattr(self.cfg, "real_joint_limits", False):
@@ -189,6 +191,38 @@ class ArtiH1AmpEnv(DirectRLEnv):
             getattr(self, "_lab_imu_sensor", None),
         )
 
+    def _init_policy_joint_order(self):
+        """Index maps between the policy joint order (cfg.policy_joint_names) and the backend's robot.data.joint_names.
+
+        Everything inside the env (PD targets, rewards, motion data) stays in the backend order; only the policy actions
+        and the joint blocks of the policy / AMP observations are permuted. PhysX already uses the policy order (identity
+        map), Newton orders the joints per leg, so without this a checkpoint drove the wrong joints on the other backend
+        and Newton-trained checkpoints did not match the ONNX export / robot controller order.
+        """
+        sim_names = list(self.robot.data.joint_names)
+        policy_names = list(getattr(self.cfg, "policy_joint_names", None) or sim_names)
+        if sorted(policy_names) != sorted(sim_names):
+            raise ValueError(f"cfg.policy_joint_names {policy_names} do not match the robot joints {sim_names}")
+        # policy slot i <-> backend joint policy_joint_ids[i]; sim_joint_ids_from_policy is the inverse permutation
+        self.policy_joint_ids = torch.tensor([sim_names.index(n) for n in policy_names], dtype=torch.long, device=self.device)
+        self.sim_joint_ids_from_policy = torch.argsort(self.policy_joint_ids)
+        self._policy_order_is_identity = bool(
+            torch.equal(self.policy_joint_ids, torch.arange(len(sim_names), device=self.device))
+        )
+        if not self._policy_order_is_identity:
+            print(f"[INFO] backend joint order {sim_names} differs from the policy order: policy I/O is permuted", flush=True)
+
+    def _joints_to_policy(self, values: torch.Tensor) -> torch.Tensor:
+        """(N, joints) in backend order -> policy order."""
+        return values if self._policy_order_is_identity else values[:, self.policy_joint_ids]
+
+    def _joint_vec6_to_policy(self, values: torch.Tensor) -> torch.Tensor:
+        """(N, joints * 6) vectorized joint positions in backend order -> policy order."""
+        if self._policy_order_is_identity:
+            return values
+        n = values.shape[0]
+        return values.view(n, -1, 6)[:, self.policy_joint_ids].reshape(n, -1)
+
     def _stale_joint_feedback(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Joint position / velocity the policy sees. The real Unitree hip / knee motors share one RS485 bus: a missed
         reply delays the whole bus cycle, so their state repeats the previous control step (1-3 % of steps standing,
@@ -285,7 +319,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.previous_actions.copy_(self.actions)
-        self.actions = actions.clone()
+        # policy order -> backend order (self.actions is used by the PD targets and rewards)
+        self.actions = actions[:, self.sim_joint_ids_from_policy] if not self._policy_order_is_identity else actions.clone()
         self._resample_commands_mid_episode()
         self.gait_phase = self._advance_gait_phase(self.gait_phase)
 
@@ -499,8 +534,8 @@ class ArtiH1AmpEnv(DirectRLEnv):
             root_orientation_quat_normalized_heading,
             root_linear_velocity_normalized_heading,
             local_root_angular_velocity_normalized_heading,
-            joints_positions_vectorized,
-            self.robot.data.joint_vel.torch,
+            self._joint_vec6_to_policy(joints_positions_vectorized),
+            self._joints_to_policy(self.robot.data.joint_vel.torch),
             amp_local_toe_positions[:, 0],
             amp_local_toe_positions[:, 1],
         )
@@ -508,11 +543,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
         policy_state_obs = compute_policy_obs(
             policy_orientation_quat_normalized_heading,
             policy_angular_velocity_normalized_heading,
-            self.motion_loader.vectorize_joint_positions(policy_joint_pos),
-            policy_joint_vel,
+            self._joint_vec6_to_policy(self.motion_loader.vectorize_joint_positions(policy_joint_pos)),
+            self._joints_to_policy(policy_joint_vel),
             policy_local_toe_positions[:, 0],
             policy_local_toe_positions[:, 1],
-            torch.clamp(self.actions, -1.0, 1.0),
+            self._joints_to_policy(torch.clamp(self.actions, -1.0, 1.0)),
         )
 
         for i in reversed(range(self.cfg.num_amp_observations - 1)):
@@ -1273,6 +1308,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
             motion_ids=history_motion_ids,
             times=history_times,
         )
+        observation_components = list(observation_components)
+        # motion data is sampled in the backend joint order; the AMP observation uses the policy order
+        observation_components[4] = self._joint_vec6_to_policy(observation_components[4])
+        observation_components[5] = self._joints_to_policy(observation_components[5])
         amp_observation = compute_obs(*observation_components)
         return amp_observation.view(num_samples, -1)
 
