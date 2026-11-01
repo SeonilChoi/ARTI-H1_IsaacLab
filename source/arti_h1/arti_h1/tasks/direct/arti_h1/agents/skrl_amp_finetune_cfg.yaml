@@ -1,0 +1,126 @@
+# Stage 2 fine-tune of skrl_amp_cfg.yaml (Template-Arti-H1-Amp-Finetune-Direct-v0); only trainer.timesteps differs.
+seed: 42
+
+
+# Models are instantiated using skrl's model instantiator utility
+# https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
+models:
+  separate: True
+  policy:  # see gaussian_model parameters
+    class: GaussianMixin
+    clip_actions: False
+    clip_log_std: True
+    # exp(-3.5) = 0.03. The last run drifted to std 0.017 with the LR already decayed to
+    # ~7.6e-6, i.e. no exploration and no step size left, and style plateaued from ~80k steps.
+    # run2/run3 reached this floor by 20k-270k steps and never lifted a foot; exp(-2.5) = 0.082 keeps exploring.
+    min_log_std: -2.5
+    max_log_std: 2.0
+    # run7: -2.0 -> -1.0 (std 0.37). A foot only clears the ground with >~0.6 knee action (lift_test.py); with std
+    # 0.135 no fresh run ever explored that far.
+    initial_log_std: -1.5
+    fixed_log_std: False
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [1024, 512]
+        activations: relu
+    output: ACTIONS
+  value:  # see deterministic_model parameters
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        # Asymmetric critic: env "critic" state = policy obs + privileged velocities.
+        input: STATES
+        layers: [1024, 512]
+        activations: relu
+    output: ONE
+  discriminator:  # see deterministic_model parameters
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [1024, 512]
+        activations: relu
+    output: ONE
+
+
+# Rollout memory
+# https://skrl.readthedocs.io/en/latest/api/memories/random.html
+memory:
+  class: RandomMemory
+  memory_size: -1  # automatically determined (same as agent:rollouts)
+
+# AMP memory (reference motion dataset)
+# https://skrl.readthedocs.io/en/latest/api/memories/random.html
+motion_dataset:
+  class: RandomMemory
+  memory_size: 200000
+
+# AMP memory (preventing discriminator overfitting)
+# https://skrl.readthedocs.io/en/latest/api/memories/random.html
+reply_buffer:
+  class: RandomMemory
+  memory_size: 1000000
+
+
+# AMP agent configuration (field names are from AMP_CFG)
+# https://skrl.readthedocs.io/en/latest/api/agents/amp.html
+agent:
+  class: AMP
+  rollouts: 48
+  learning_epochs: 3
+  mini_batches: 6
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  learning_rate: 5.0e-05
+  learning_rate_scheduler: KLAdaptiveLR
+  learning_rate_scheduler_kwargs:
+    kl_threshold: 0.016
+  # skrl 2.0: observation_preprocessor normalizes the policy input, state_preprocessor the
+  # critic's "states". (The old yaml-only state_preprocessor was silently remapped.)
+  observation_preprocessor: RunningStandardScaler
+  observation_preprocessor_kwargs: null
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  value_preprocessor: RunningStandardScaler
+  value_preprocessor_kwargs: null
+  amp_observation_preprocessor: RunningStandardScaler
+  amp_observation_preprocessor_kwargs: null
+  random_timesteps: 0
+  learning_starts: 0
+  grad_norm_clip: 1.0
+  ratio_clip: 0.2
+  value_clip: 0.2
+  entropy_loss_scale: 0.001
+  value_loss_scale: 2.5
+  discriminator_loss_scale: 5.0
+  amp_batch_size: 512
+  # 0.6/0.4 plus the signed-progress term let the policy trade style for speed by skating
+  # (run 2026-09-23_16-30-36). Back to equal weights now that the gait terms guard the task side.
+  # run31: 0.4/0.6 - run30 lost style (0.475 -> 0.42) and looked stiff; lean on the reference motion.
+  # run15 (new robot): 0.3/0.7 - run14 plateaued 1M steps at style .34, disc acc .98; lean harder on the reference.
+  task_reward_scale: 0.5
+  style_reward_scale: 0.5
+  discriminator_batch_size: 4096
+  discriminator_logit_regularization_scale: 0.05
+  discriminator_gradient_penalty_scale: 5.0
+  discriminator_weight_decay_scale: 1.0e-04
+  # rewards_shaper_scale: 1.0
+  time_limit_bootstrap: False
+  # logging and checkpoint
+  experiment:
+    directory: "arti_h1_amp_walk"
+    experiment_name: ""  # run dirs stay in arti_h1_amp_walk so eval scripts / --checkpoint latest find them
+    write_interval: 1000
+    checkpoint_interval: 5000
+
+
+# Sequential trainer
+# https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
+trainer:
+  class: SequentialTrainer
+  # stage 2 fine-tune (warm start): ~600k steps; judge every 50-100k with eval_gait (sequence + standpush)
+  timesteps: 600000
+  environment_info: log

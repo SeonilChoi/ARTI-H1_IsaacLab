@@ -38,3 +38,16 @@ gym.register(
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
     },
 )
+
+# Stage 2: warm start from a stage-1 checkpoint to track the commanded speed (ArtiH1AmpFinetuneEnvCfg).
+gym.register(
+    id="Template-Arti-H1-Amp-Finetune-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_env:ArtiH1AmpEnv",
+    disable_env_checker=True,
+    kwargs={
+        **_ARTI_H1_AMP_KWARGS,
+        "env_cfg_entry_point": f"{__name__}.arti_h1_env_cfg:ArtiH1AmpFinetuneEnvCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_finetune_cfg.yaml",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_amp_finetune_cfg.yaml",
+    },
+)
