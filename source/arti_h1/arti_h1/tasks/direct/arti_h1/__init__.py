@@ -29,6 +29,7 @@ gym.register(
     kwargs={**_ARTI_H1_AMP_KWARGS, "skrl_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml"},
 )
 
+# Reinforcement learning only (PPO, no AMP style reward): same env cfg and rewards, agents/skrl_ppo_cfg.yaml.
 gym.register(
     id="Template-Arti-H1-Direct-v0",
     entry_point=f"{__name__}.arti_h1_env:ArtiH1AmpEnv",
