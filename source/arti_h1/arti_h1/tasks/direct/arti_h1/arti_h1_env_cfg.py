@@ -365,8 +365,12 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     policy_joint_vel_noise_std = 0.3
     # Per control step probability that the hip / knee (Unitree bus) joint obs repeat the previous step; 0 = off.
     joint_obs_stale_prob = 0.05
-    # Per-episode constant offset (rad, +-) on the policy joint position obs: homing / encoder calibration error.
+    # Per-episode constant homing / encoder zero error (rad, +-). The policy joint obs AND its joint targets are in the
+    # encoder frame, so the joint physically sits at target - offset (before 11-03 only the obs was shifted, which
+    # looked like a constant PD error instead of a mis-calibrated joint).
     joint_obs_offset_range = 0.02
+    # Per joint type +- range that replaces joint_obs_offset_range (e.g. {"ankle_roll": 0.06}); {} = off.
+    joint_obs_offset_range_by_type: dict = {}
     # Minimum +-range per side on top of the reference-derived scales (used when uniform_action_scale = 0).
     # The reference knee only extends 0.070 rad past the default, but in single support the stance knee sags
     # ~0.16 rad at kp 35 (replay with pelvis support: stance knee 0.146 vs 0.214 even at 4x gains), so with the
@@ -699,6 +703,11 @@ class ArtiH1AmpSim2RealEnvCfg(ArtiH1AmpFinetuneEnvCfg):
     actuator_delay_extra_ms = {"hip_roll": 50.0, "ankle_pitch": 25.0}
     # curriculum_step_offset is 1M (inherited): ramp over run steps 0 -> 200k.
     actuator_delay_extra_curriculum_steps = (1_000_000, 1_200_000)
+    # 11-02 robot logs (agent_s2r_340000): at the home pose both soles sat lifted on the inner edge, and standing the
+    # policy held hip_roll / ankle_roll 2.4-3.6 deg away from its sim posture -> roll joint zero errors of ~3 deg,
+    # outside the 0.02 rad (1.1 deg) base range; the stance foot then rolled on its edge (12-18 deg, sim 0.7) and the
+    # robot fell forward. Stage-3 agent_600000 with a 0.05 rad obs offset + real lag: 7 falls / 64 env x 25 s (0 without).
+    joint_obs_offset_range_by_type = {"hip_roll": 0.06, "ankle_roll": 0.06}
 
     def __post_init__(self):
         super().__post_init__()

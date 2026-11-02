@@ -371,6 +371,10 @@ class ArtiH1AmpEnv(DirectRLEnv):
             target = torch.clamp(target, self._joint_pos_lower, self._joint_pos_upper)
 
         self.desired_joint_target = target
+        if hasattr(self, "joint_obs_offset"):
+            # Homing / encoder zero error: the policy target and its joint obs are both in the encoder frame
+            # (obs = true + offset), so the joint physically settles at target - offset, like on the robot.
+            target = target - self.joint_obs_offset
         if self.cfg.actuator_model:
             target = self._apply_actuator_model(target)
         self.robot.actuators.target_command.set_position_index(value=target)
@@ -1264,12 +1268,16 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.last_swing_time[env_ids] = 0.0
         self.has_last_swing[env_ids] = False
         self.mti3_imu.reset(env_ids, root_state[:, 3:7], root_state[:, 10:13])
-        if self.cfg.joint_obs_offset_range > 0.0:
+        if self.cfg.joint_obs_offset_range > 0.0 or self.cfg.joint_obs_offset_range_by_type:
             if not hasattr(self, "joint_obs_offset"):
                 self.joint_obs_offset = torch.zeros_like(self.robot.data.joint_pos.torch)
-            self.joint_obs_offset[env_ids] = torch.empty(
-                (len(env_ids), self.joint_obs_offset.shape[1]), device=self.device
-            ).uniform_(-self.cfg.joint_obs_offset_range, self.cfg.joint_obs_offset_range)
+                by_type = self.cfg.joint_obs_offset_range_by_type or {}
+                self._joint_obs_offset_range = torch.tensor(
+                    [by_type.get(n.split("_", 1)[1], self.cfg.joint_obs_offset_range) for n in self.robot.data.joint_names],
+                    device=self.device, dtype=torch.float32,
+                )
+            draw = torch.rand((len(env_ids), self.joint_obs_offset.shape[1]), device=self.device) * 2.0 - 1.0
+            self.joint_obs_offset[env_ids] = draw * self._joint_obs_offset_range
         if motion_ids is None:
             motion_ids = self.motion_loader.sample_motion_ids(len(env_ids))
 
