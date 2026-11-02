@@ -34,6 +34,10 @@ parser.add_argument("--no_com_dr", action="store_true", help="disable the pelvis
 parser.add_argument("--save_obs_stats", type=str, default=None, help="npz with per-dim obs min / max / mean / std")
 parser.add_argument("--save_log", type=str, default=None,
                     help="write env 0 as a humanoid_controller runtime log (ARTI-H1 log_file format)")
+parser.add_argument("--joint_offset", type=str, default=None,
+                    help="fixed homing / encoder zero error per joint, e.g. left_ankle_roll=0.06,right_ankle_roll=-0.06 (rad; "
+                         "the joint sits at target - offset, see cfg.joint_obs_offset_range)")
+parser.add_argument("--lag", action="store_true", help="real robot joint lag: hip_roll 65 ms, ankle_pitch 35 ms")
 parser.add_argument("--physics", type=str, default="isaacsim_physx", help="physics preset: isaacsim_physx | newton_mjwarp")
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -75,11 +79,22 @@ if args_cli.nominal_table:
     cfg.nominal_gait_table_file = args_cli.nominal_table
 if args_cli.hip_roll_limit:
     cfg.hip_roll_limit = args_cli.hip_roll_limit
+if args_cli.lag:
+    cfg.actuator_delay_ms = dict(cfg.actuator_delay_ms, hip_roll=65.0, ankle_pitch=35.0)
+if args_cli.joint_offset:
+    cfg.joint_obs_offset_range = 1e-9  # create the offset buffer; the values are set after reset
 env = gym.make(TASK, cfg=cfg)
 uenv = env.unwrapped
 sess = ort.InferenceSession(args_cli.onnx, providers=["CPUExecutionProvider"])
 
 obs, _ = env.reset()
+if args_cli.joint_offset:
+    jn = list(env.unwrapped.robot.data.joint_names)
+    env.unwrapped.joint_obs_offset[:] = 0.0
+    for kv in args_cli.joint_offset.split(","):
+        k, v = kv.split("=")
+        env.unwrapped.joint_obs_offset[:, jn.index(k)] = float(v)
+    obs = {"policy": env.unwrapped._get_observations()["policy"]}
 cmd = torch.tensor([float(v) for v in args_cli.command.split(",")], device=uenv.device)
 if args_cli.hang:
     root = uenv._default_root_state(torch.arange(uenv.num_envs, device=uenv.device))

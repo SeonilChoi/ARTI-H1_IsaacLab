@@ -101,7 +101,8 @@ isaaclab play --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacs
 - Stage 3 (`ArtiH1AmpSim2RealEnvCfg`): stage 2 plus a per-env extra joint lag uniform(0, 50 ms) on hip_roll and
   uniform(0, 25 ms) on ankle_pitch, resampled at every reset and ramped in over 200k steps (the real walk logs lag
   that much more than the sim model; TensorBoard `Sim2Real/extra_delay_ms_mean`), sagittal training pushes +-0.30 m/s
-  (other tasks +-0.20). 600k steps.
+  (other tasks +-0.20), and hip_roll / ankle_roll homing zero errors up to +-0.06 rad (other joints +-0.02; the
+  joint obs and targets are both in the encoder frame, like the robot). 600k steps.
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
 Setup:
