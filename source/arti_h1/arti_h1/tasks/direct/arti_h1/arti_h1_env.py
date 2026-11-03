@@ -799,6 +799,7 @@ class ArtiH1AmpEnv(DirectRLEnv):
             + base_flat_reward
             + base_ang_vel_reward
             + base_sway_reward
+            + self._stance_com_reward
         )
         self.extras["log"] = {
             **({"Sim2Real/extra_delay_ms_mean": (self.actuator_delay_steps.float().mean() * self.cfg.sim.dt * 1000.0
@@ -826,6 +827,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
             "Reward/foot_slip": foot_slip_reward.mean(),
             "Reward/contact_symmetry": contact_symmetry_reward.mean(),
             "Reward/gait_contact": self._gait_contact_reward.mean(),
+            "Reward/stance_com": self._stance_com_reward.mean(),
+            "Gait/stance_com_toward_swing_m": (
+                torch.sum(self._stance_com_offset * self._single_support.float())
+                / self._single_support.float().sum().clamp_min(1.0)
+            ),
             "Reward/stand": self._stand_reward.mean(),
             "Reward/gait_swing_contact": self._gait_swing_contact_penalty.mean(),
             "Reward/gait_swing_height": self._gait_height_reward.mean(),
@@ -1109,7 +1115,39 @@ class ArtiH1AmpEnv(DirectRLEnv):
             * (expected_swing.any(dim=-1) & moving_command).float()
             * self.cfg.gait_swing_height_reward_scale
         )
+        # Stance CoM: while one foot swings (gait clock), the whole-body CoM must sit over the stance sole. PPO
+        # agent_1360000 on the robot (11-03) lifted a foot without first moving its weight onto the other one and
+        # fell toward the swing side (roll +4.6 deg median, up to +11 deg per right step); AMP 600k shifts ~3 deg onto
+        # the stance foot in sim, PPO ~0. Penalty is linear in the part of the offset beyond stance_com_margin.
+        self._single_support = expected_swing.any(dim=-1) & ~expected_swing.all(dim=-1) & moving_command
+        self._stance_com_offset = self._stance_com_toward_swing(expected_swing, feet_position, root_quat_xyzw)
+        self._stance_com_reward = (
+            torch.clamp(self._stance_com_offset - self.cfg.stance_com_margin, min=0.0)
+            * self._single_support.float()
+            * self.cfg.stance_com_reward_scale
+        )
         return feet_air_time_reward, foot_slip_reward, contact, contact_symmetry_reward
+
+    def _stance_com_toward_swing(
+        self, expected_swing: torch.Tensor, feet_position: torch.Tensor, root_quat_xyzw: torch.Tensor
+    ) -> torch.Tensor:
+        """Lateral offset (m, heading frame) of the whole-body CoM from the stance sole centre, + toward the swing foot.
+
+        The stance foot is the one the gait clock does not swing (right swings -> left stance). Masses are read once:
+        the mass / CoM randomisation events run at startup.
+        """
+        if not hasattr(self, "_body_mass"):
+            self._body_mass = self.robot.data.body_mass.torch.to(self.device).clone()
+            self._total_mass = self._body_mass.sum(dim=-1, keepdim=True)
+        com_w = torch.sum(self.robot.data.body_com_pos_w.torch * self._body_mass.unsqueeze(-1), dim=1) / self._total_mass
+        local = self.motion_loader.localize_positions(
+            self.robot.data.body_pos_w.torch[:, self.ref_body_index],
+            root_quat_xyzw,
+            torch.cat((feet_position, com_w.unsqueeze(1)), dim=1),
+        )
+        com_y = local[:, 2, 1]
+        # left sole is on +y: with the right foot swinging, "toward the swing side" is -y from the left sole
+        return torch.where(expected_swing[:, 1], local[:, 0, 1] - com_y, com_y - local[:, 1, 1])
 
     def _update_average_root_velocity(
         self,
