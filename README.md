@@ -106,11 +106,12 @@ isaaclab play --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacs
   that much more than the sim model; TensorBoard `Sim2Real/extra_delay_ms_mean`), sagittal training pushes +-0.30 m/s
   (other tasks +-0.20), and hip_roll / ankle_roll homing zero errors up to +-0.06 rad (other joints +-0.02; the
   joint obs and targets are both in the encoder frame, like the robot). 600k steps.
-- PPO stage 3 (`ArtiH1PpoSim2RealEnvCfg`): the AMP stage-3 cfg plus a stance CoM penalty
-  (`stance_com_reward_scale` -10 per m beyond `stance_com_margin` 30 mm: lateral distance of the whole-body CoM from
-  the stance sole centre toward the swing foot while the gait clock swings one foot) and `base_lateral_sway` -10 -> -5.
-  PPO agent_1360000 lifted a foot without moving its weight onto the other one (CoM 55 mm toward the swing side, sole
-  half-width 45 mm) and tipped toward the swing side on the robot (11-03). TensorBoard `Gait/stance_com_toward_swing_m`.
+- Stance CoM (stage 3, AMP and PPO, 11-03): `stance_com_reward_scale` -10 per m beyond `stance_com_margin` 30 mm of
+  the lateral distance of the whole-body CoM from the stance sole centre toward the swing foot while the gait clock
+  swings one foot, and `base_lateral_sway` -10 -> -5. Both PPO 1360k and AMP 600k tipped toward the swing side on the
+  robot; the reference clips keep the pelvis 44 mm from the stance sole (motion_generator `foot_zmp_target_y` -0.03,
+  sole half-width 45 mm), AMP 600k CoM 44 mm, PPO 1360k 55 mm. TensorBoard `Gait/stance_com_toward_swing_m`.
+  PPO stage 3: `Template-Arti-H1-Sim2Real-Direct-v0` (`ArtiH1PpoSim2RealEnvCfg`, warm start from a PPO checkpoint).
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
 Setup:
