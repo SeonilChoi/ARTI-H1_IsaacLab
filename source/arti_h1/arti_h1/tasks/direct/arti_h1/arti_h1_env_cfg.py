@@ -712,6 +712,13 @@ class ArtiH1AmpSim2RealEnvCfg(ArtiH1AmpFinetuneEnvCfg):
     # outside the 0.02 rad (1.1 deg) base range; the stance foot then rolled on its edge (12-18 deg, sim 0.7) and the
     # robot fell forward. Stage-3 agent_600000 with a 0.05 rad obs offset + real lag: 7 falls / 64 env x 25 s (0 without).
     joint_obs_offset_range_by_type = {"hip_roll": 0.06, "ankle_roll": 0.06}
+    # 11-03: PPO 1360k and AMP 600k both tipped toward the swing side on the robot. The reference clips keep the pelvis
+    # 44 mm from the stance sole centre toward the swing foot in single support (motion_generator gait.json
+    # foot_zmp_target_y -0.03; sole half-width 45 mm) and AMP 600k copies it (CoM 44 mm), PPO 1360k 55 mm. Stance CoM
+    # penalty: -10 per m beyond 30 mm; base_lateral_sway -10 -> -5 so the weight shift is not charged for.
+    stance_com_reward_scale = -10.0
+    stance_com_margin = 0.03
+    base_lateral_sway_reward_scale = -5.0
 
     def __post_init__(self):
         super().__post_init__()
@@ -723,7 +730,7 @@ class ArtiH1AmpSim2RealEnvCfg(ArtiH1AmpFinetuneEnvCfg):
 
 @configclass
 class ArtiH1PpoSim2RealEnvCfg(ArtiH1AmpSim2RealEnvCfg):
-    """Stage 3 for the RL-only (PPO) policy: the AMP stage-3 sim-to-real cfg plus a stance CoM term.
+    """Stage 3 for the RL-only (PPO) policy: the AMP stage-3 sim-to-real cfg (incl. the stance CoM term).
 
     11-03 robot log of PPO agent_1360000 (stage-1 cfg only): every time a foot lifted the robot tipped toward the
     swing side (roll median +4.6 deg, max +11 deg on right steps; a hand pushing from that side steadied it). In sim
@@ -734,8 +741,4 @@ class ArtiH1PpoSim2RealEnvCfg(ArtiH1AmpSim2RealEnvCfg):
     ramps in over the first 200k steps as in the AMP stage 3).
     """
 
-    # -10 per m beyond 30 mm: the 1360k gait (27 mm excess on average) costs ~-0.27 per single-support step.
-    stance_com_reward_scale = -10.0
-    stance_com_margin = 0.03
-    # -10 -> -5: the weight shift needs a lateral pelvis motion the sway term would otherwise charge for.
-    base_lateral_sway_reward_scale = -5.0
+    # stance CoM term and base_lateral_sway -5 are inherited from ArtiH1AmpSim2RealEnvCfg.
