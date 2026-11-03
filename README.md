@@ -71,6 +71,9 @@ RL only (PPO), terminal 2:
 ```bash
 tmux new -s h1-ppo
 isaaclab train --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacsim_physx --num_envs 8192
+# stage 3 (sim-to-real like the AMP stage 3, plus the stance CoM term), warm start from a PPO checkpoint:
+isaaclab train --rl_library skrl --task Template-Arti-H1-Sim2Real-Direct-v0 physics=isaacsim_physx --num_envs 8192 \
+    --checkpoint server/ppo_agent_1360000.pt
 ```
 
 Play over WebRTC livestream (Kit viewer; connect with the Isaac Sim WebRTC Streaming Client to the server IP).
@@ -103,6 +106,11 @@ isaaclab play --rl_library skrl --task Template-Arti-H1-Direct-v0 physics=isaacs
   that much more than the sim model; TensorBoard `Sim2Real/extra_delay_ms_mean`), sagittal training pushes +-0.30 m/s
   (other tasks +-0.20), and hip_roll / ankle_roll homing zero errors up to +-0.06 rad (other joints +-0.02; the
   joint obs and targets are both in the encoder frame, like the robot). 600k steps.
+- PPO stage 3 (`ArtiH1PpoSim2RealEnvCfg`): the AMP stage-3 cfg plus a stance CoM penalty
+  (`stance_com_reward_scale` -10 per m beyond `stance_com_margin` 30 mm: lateral distance of the whole-body CoM from
+  the stance sole centre toward the swing foot while the gait clock swings one foot) and `base_lateral_sway` -10 -> -5.
+  PPO agent_1360000 lifted a foot without moving its weight onto the other one (CoM 55 mm toward the swing side, sole
+  half-width 45 mm) and tipped toward the swing side on the robot (11-03). TensorBoard `Gait/stance_com_toward_swing_m`.
 - Progress summary: `PY=<isaac lab python> bash scripts/tuning/check.sh`.
 
 Setup:

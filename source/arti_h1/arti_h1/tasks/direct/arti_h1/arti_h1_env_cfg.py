@@ -596,6 +596,10 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # run5: -8 -> -20 (run3 skated 1M steps at -8). run7: -20 cost -3.5 per step on the initial action noise and
     # drove std .35 -> .14 in 10k; with the nominal gait lifting the feet, -8 again.
     foot_slip_reward_scale = -8.0
+    # Stance CoM (single support by the gait clock, walking only): scale * max(0, offset - margin), offset = lateral
+    # distance (m) of the whole-body CoM from the stance sole centre toward the swing foot. 0 = off (stage 1-3 AMP).
+    stance_com_reward_scale = 0.0
+    stance_com_margin = 0.0
 
     early_termination = True
     termination_height = 0.2
@@ -715,3 +719,23 @@ class ArtiH1AmpSim2RealEnvCfg(ArtiH1AmpFinetuneEnvCfg):
         # 2/16 back->front standing pushes at 0.30 m/s (lateral 0.40: 0/16) and never stepped; training never pushed
         # it that hard sagittally. Continue a stage-3 run with env.curriculum_step_offset=1200000 (lag ramp done).
         self.events.push_robot.params["velocity_range"]["x"] = (-0.30, 0.30)
+
+
+@configclass
+class ArtiH1PpoSim2RealEnvCfg(ArtiH1AmpSim2RealEnvCfg):
+    """Stage 3 for the RL-only (PPO) policy: the AMP stage-3 sim-to-real cfg plus a stance CoM term.
+
+    11-03 robot log of PPO agent_1360000 (stage-1 cfg only): every time a foot lifted the robot tipped toward the
+    swing side (roll median +4.6 deg, max +11 deg on right steps; a hand pushing from that side steadied it). In sim
+    with the real lag (64 env x 20 s, cmd 0.022 m/s) the whole-body CoM sat 55 mm (p90 80 mm) from the stance sole
+    centre toward the swing foot during single support, i.e. outside the 45 mm half-width sole, almost on the midline
+    (soles ~120 mm apart); AMP 600k 44 mm (p90 57 mm). Without a style reward nothing asked for the weight shift and
+    base_lateral_sway even penalised it. Train with --checkpoint <PPO agent_N.pt> (curricula start finished, the lag
+    ramps in over the first 200k steps as in the AMP stage 3).
+    """
+
+    # -10 per m beyond 30 mm: the 1360k gait (27 mm excess on average) costs ~-0.27 per single-support step.
+    stance_com_reward_scale = -10.0
+    stance_com_margin = 0.03
+    # -10 -> -5: the weight shift needs a lateral pelvis motion the sway term would otherwise charge for.
+    base_lateral_sway_reward_scale = -5.0

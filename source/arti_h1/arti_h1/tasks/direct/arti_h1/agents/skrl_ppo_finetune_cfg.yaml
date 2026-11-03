@@ -1,0 +1,87 @@
+# Stage 3 fine-tune of skrl_ppo_cfg.yaml (Template-Arti-H1-Sim2Real-Direct-v0); only trainer.timesteps differs.
+seed: 42
+
+
+# Reinforcement learning only (no AMP style reward / discriminator): task "Template-Arti-H1-Direct-v0".
+# Same environment, rewards, actor and asymmetric critic as skrl_amp_cfg.yaml, so a PPO run and an AMP run differ only
+# in the style reward. The policy still acts as a residual on the nominal gait table; without the style reward the
+# gait terms (gait_contact, swing height, symmetry, foot width, ...) alone shape the motion.
+
+# Models are instantiated using skrl's model instantiator utility
+# https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
+models:
+  separate: True
+  policy:  # see gaussian_model parameters
+    class: GaussianMixin
+    clip_actions: False
+    clip_log_std: True
+    min_log_std: -2.5  # std floor 0.082, as AMP (lower stopped exploring before a foot lifted)
+    max_log_std: 2.0
+    initial_log_std: -1.5
+    fixed_log_std: False
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [1024, 512]
+        activations: relu
+    output: ACTIONS
+  value:  # see deterministic_model parameters
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        # Asymmetric critic: env "critic" state = policy obs + privileged velocities.
+        input: STATES
+        layers: [1024, 512]
+        activations: relu
+    output: ONE
+
+
+# Rollout memory
+# https://skrl.readthedocs.io/en/latest/api/memories/random.html
+memory:
+  class: RandomMemory
+  memory_size: -1  # automatically determined (same as agent:rollouts)
+
+
+# PPO agent configuration (field names are from PPO_CFG); hyperparameters as the AMP recipe
+# https://skrl.readthedocs.io/en/latest/api/agents/ppo.html
+agent:
+  class: PPO
+  rollouts: 48
+  learning_epochs: 3
+  mini_batches: 6
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  learning_rate: 5.0e-05
+  learning_rate_scheduler: KLAdaptiveLR
+  learning_rate_scheduler_kwargs:
+    kl_threshold: 0.016
+  observation_preprocessor: RunningStandardScaler
+  observation_preprocessor_kwargs: null
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  value_preprocessor: RunningStandardScaler
+  value_preprocessor_kwargs: null
+  grad_norm_clip: 1.0
+  ratio_clip: 0.2
+  value_clip: 0.2
+  entropy_loss_scale: 0.001
+  value_loss_scale: 2.5
+  kl_threshold: 0.0
+  # rewards_shaper_scale: 1.0
+  time_limit_bootstrap: False
+  # logging and checkpoint
+  experiment:
+    directory: "arti_h1_ppo_walk"
+    experiment_name: ""
+    write_interval: 1000
+    checkpoint_interval: 5000
+
+
+# Sequential trainer
+# https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
+trainer:
+  class: SequentialTrainer
+  timesteps: 600000
+  environment_info: log

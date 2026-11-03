@@ -65,3 +65,15 @@ gym.register(
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_amp_finetune_cfg.yaml",
     },
 )
+
+# Stage 3 for RL only (PPO): warm start from a PPO checkpoint; AMP stage-3 cfg + stance CoM term (ArtiH1PpoSim2RealEnvCfg).
+gym.register(
+    id="Template-Arti-H1-Sim2Real-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_env:ArtiH1AmpEnv",
+    disable_env_checker=True,
+    kwargs={
+        **_ARTI_H1_AMP_KWARGS,
+        "env_cfg_entry_point": f"{__name__}.arti_h1_env_cfg:ArtiH1PpoSim2RealEnvCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_finetune_cfg.yaml",
+    },
+)
