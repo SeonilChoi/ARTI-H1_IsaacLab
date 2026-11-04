@@ -76,6 +76,52 @@ isaaclab train --rl_library skrl --task Template-Arti-H1-Sim2Real-Direct-v0 phys
     --checkpoint server/ppo_agent_1360000.pt
 ```
 
+Velocity walking from scratch with the Microduck recipe (PPO only), terminal 3:
+
+```bash
+tmux new -s h1-vel
+isaaclab train --rl_library skrl --task Template-Arti-H1-Velocity-Direct-v0 physics=isaacsim_physx --num_envs 8192
+# resume: add --checkpoint <agent_N.pt> env.curriculum_step_offset=N
+```
+
+This task is a separate line of work, ported from [microduck_rl](https://github.com/pollen-robotics/microduck_rl)
+(`Mjlab-Velocity-Flat-MicroDuck`, mjlab 1.3.0). See `arti_h1_velocity_env_cfg.py` for the details.
+- It uses no reference motions, gait clock, ILC nominal table or AMP. q_des = clamp(default + scale * clamp(a, -1, 1)),
+  with scale per joint (hip_pitch 0.6, knee 0.7, ankle_pitch 0.5, ankle_roll 0.3, hip_roll 0.25, hip_yaw 0.2 rad).
+- The obs is 45-D (mjlab actor layout): IMU gyro, IMU projected gravity, joint pos - default, joint vel, previous
+  action, command (vx, vy, wz, raw, last).
+- The asymmetric critic adds the true base linear velocity and the per-foot height / air time / contact.
+- Rewards are mjlab terms with Microduck weights, each weight * value * step_dt:
+  - track_linear_velocity / track_angular_velocity 2 / 2, upright 2, pose 1 (variable_posture)
+  - body_ang_vel -0.05, angular_momentum -0.02, dof_pos_limits -1
+  - action_rate -0.1 -> -1.0 by iteration 1500
+  - air_time 3 (window 0.1-0.5 s, counted only in single support), foot_clearance -2 / foot_swing_height -0.25
+    (target 3 cm), foot_slip -1.0 (Microduck -0.1; at -0.1 ARTI-H1 skated instead of stepping)
+  - feet_too_close -1 (in place of Microduck's self-collision term), foot_flat -10 (sin^2 sole tilt in contact)
+  - Contact comes from the lowest sole corner (< 8 mm), not the sole centre. With the sole centre, standing on
+    tilted soles counted as "in air" and the policy farmed air time.
+  - Every `Reward/<penalty>` in TensorBoard must stay <= 0.
+- Commands are fixed ranges vx +-0.15, vy +-0.08, wz +-0.4. 15 % of envs turn in place, and the standing (all-zero)
+  fraction ramps 2 -> 25 % by iteration 2000.
+- The ARTI-H1 sim-to-real models are kept: actuator delay / armature / Coulomb DR, real joint limits, hip_roll +-15
+  deg, MTi-3 IMU model, joint zero errors (roll joints +-0.06 rad), stale bus reads, joint-vel noise. Pushes are
+  +-0.3 / +-0.2 m/s every 3-6 s. The stage-3 extra lag (hip_roll 0-50 ms, ankle_pitch 0-25 ms) ramps in over
+  iterations 1000 -> 3000.
+- PPO uses the Microduck hyperparameters (`agents/skrl_velocity_ppo_cfg.yaml`): 512-256-128 ELU, 24 steps/env,
+  5 epochs x 4 mini-batches, lr 1e-3 KL-adaptive 0.01, entropy 0.01. One iteration = 24 timesteps. The run is 6000
+  iterations (144k timesteps), with a checkpoint every 250 iterations.
+- Logs go to `logs/skrl/arti_h1_velocity/`. TensorBoard: `Reward/*`, `Episode_Reward/*`, `Metrics/air_time_mean`,
+  `Metrics/peak_height_mean`, `Metrics/air_ratio_*`, `Tracking/*`, `Curriculum/*`.
+- Export with `scripts/pt_to_onnx.py` (unchanged, 45 -> 12). humanoid_controller still needs a matching 45-D obs mode
+  (no gait clock / nominal table) before the policy can run on the robot.
+- Viewer: `--task Template-Arti-H1-Velocity-Play-Direct-v0` (final curriculum stages, 16 envs).
+- Local check (2048 envs, 600 iterations): alternating steps appear by iteration ~300 (single support 0.98, air ratio
+  0.5 / 0.5, air time 0.22 s, peak 4 cm, stance sole tilt 3 deg, episodes reach 20 s). Yaw tracking is still poor at
+  that point (error 0.8 rad/s), so the full 6000 iterations are needed.
+- Option: `env.balance_support_kp=40.0 env.balance_support_kd=2.0 "env.balance_support_fade_steps=[24000,72000]"` adds
+  the old trunk-support crutch, faded out over iterations 1000 -> 3000. It is not needed for stepping, but it lowered
+  slip (0.10 vs 0.21 m/s) and yaw error (0.47 vs 0.83 rad/s) at iteration 600.
+
 Play over WebRTC livestream (Kit viewer; connect with the Isaac Sim WebRTC Streaming Client to the server IP).
 `--checkpoint latest` loads the newest checkpoint of that task's log dir; pass a path (`.../checkpoints/agent_N.pt`)
 for a specific one. Stop the viewer with Ctrl+C.
