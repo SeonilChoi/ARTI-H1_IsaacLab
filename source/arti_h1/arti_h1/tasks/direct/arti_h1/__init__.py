@@ -77,3 +77,28 @@ gym.register(
         "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_finetune_cfg.yaml",
     },
 )
+
+# Velocity walking from scratch with the Microduck recipe (pollen-robotics/microduck_rl): plain PPO, no reference
+# motions / gait clock / nominal table / AMP, 45-D obs (ArtiH1VelocityEnvCfg, agents/skrl_velocity_ppo_cfg.yaml).
+_ARTI_H1_VELOCITY_KWARGS = {
+    "env_cfg_entry_point": f"{__name__}.arti_h1_velocity_env_cfg:ArtiH1VelocityEnvCfg",
+    "default_agent": "skrl",
+    "skrl_cfg_entry_point": f"{agents.__name__}:skrl_velocity_ppo_cfg.yaml",
+}
+
+gym.register(
+    id="Template-Arti-H1-Velocity-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_velocity_env:ArtiH1VelocityEnv",
+    disable_env_checker=True,
+    kwargs=_ARTI_H1_VELOCITY_KWARGS,
+)
+
+gym.register(
+    id="Template-Arti-H1-Velocity-Play-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_velocity_env:ArtiH1VelocityEnv",
+    disable_env_checker=True,
+    kwargs={
+        **_ARTI_H1_VELOCITY_KWARGS,
+        "env_cfg_entry_point": f"{__name__}.arti_h1_velocity_env_cfg:ArtiH1VelocityEnvCfg_PLAY",
+    },
+)

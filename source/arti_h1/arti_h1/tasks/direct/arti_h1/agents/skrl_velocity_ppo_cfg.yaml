@@ -1,0 +1,80 @@
+seed: 42
+
+
+# Task "Template-Arti-H1-Velocity-Direct-v0": ARTI-H1 velocity walking from scratch, Microduck recipe.
+# Hyperparameters = microduck_rl MicroduckRlCfg (rsl_rl PPO) translated to skrl: actor / critic 512-256-128 ELU,
+# observation normalisation, 24 steps per env per iteration, 5 epochs x 4 mini-batches, lr 1e-3 with the KL-adaptive
+# schedule (desired KL 0.01), entropy 0.01, clip 0.2, gamma 0.99, lambda 0.95, grad norm 1.0.
+# One skrl timestep = one env step, so iteration N = timestep 24 * N (Microduck curricula are in iterations).
+
+models:
+  separate: True
+  policy:
+    class: GaussianMixin
+    clip_actions: False
+    clip_log_std: True
+    min_log_std: -3.0
+    max_log_std: 1.0
+    # Microduck init_std 1.0 on unclamped actions. Here actions are clamped to +-1 before the PD target, so 0.8
+    # (log -0.22). With 0.5 (log -0.69) the std collapsed to 0.14 before any foot lift was found.
+    initial_log_std: -0.22
+    fixed_log_std: False
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [512, 256, 128]
+        activations: elu
+    output: ACTIONS
+  value:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        # Asymmetric critic: env "critic" state (clean actor terms + base lin vel + foot height / air time / contact).
+        input: STATES
+        layers: [512, 256, 128]
+        activations: elu
+    output: ONE
+
+
+memory:
+  class: RandomMemory
+  memory_size: -1
+
+
+agent:
+  class: PPO
+  rollouts: 24
+  learning_epochs: 5
+  mini_batches: 4
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  learning_rate: 1.0e-03
+  learning_rate_scheduler: KLAdaptiveLR
+  learning_rate_scheduler_kwargs:
+    kl_threshold: 0.01
+  observation_preprocessor: RunningStandardScaler
+  observation_preprocessor_kwargs: null
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  value_preprocessor: RunningStandardScaler
+  value_preprocessor_kwargs: null
+  grad_norm_clip: 1.0
+  ratio_clip: 0.2
+  value_clip: 0.2
+  entropy_loss_scale: 0.01
+  value_loss_scale: 1.0
+  kl_threshold: 0.0
+  time_limit_bootstrap: True
+  experiment:
+    directory: "arti_h1_velocity"
+    experiment_name: ""
+    write_interval: 240        # every 10 iterations
+    checkpoint_interval: 6000  # every 250 iterations (Microduck save_interval)
+
+
+trainer:
+  class: SequentialTrainer
+  # 6000 iterations (Microduck: gaits need 4000-6000 iterations at 4096 envs)
+  timesteps: 144000
+  environment_info: log
