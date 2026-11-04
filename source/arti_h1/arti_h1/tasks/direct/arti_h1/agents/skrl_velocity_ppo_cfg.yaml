@@ -75,6 +75,7 @@ agent:
 
 trainer:
   class: SequentialTrainer
-  # 6000 iterations (Microduck: gaits need 4000-6000 iterations at 4096 envs)
-  timesteps: 144000
+  # 20000 iterations. Microduck gaits appear by 4000-6000 iterations, and every curriculum here ends by iteration 3000.
+  # The rest is for tracking / robustness. Stop early once the metrics plateau.
+  timesteps: 480000
   environment_info: log
