@@ -108,8 +108,9 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
   +-0.3 / +-0.2 m/s every 3-6 s. The stage-3 extra lag (hip_roll 0-50 ms, ankle_pitch 0-25 ms) ramps in over
   iterations 1000 -> 3000.
 - PPO uses the Microduck hyperparameters (`agents/skrl_velocity_ppo_cfg.yaml`): 512-256-128 ELU, 24 steps/env,
-  5 epochs x 4 mini-batches, lr 1e-3 KL-adaptive 0.01, entropy 0.01. One iteration = 24 timesteps. The run is 6000
-  iterations (144k timesteps), with a checkpoint every 250 iterations.
+  5 epochs x 4 mini-batches, lr 1e-3 KL-adaptive 0.01, entropy 0.01. One iteration = 24 timesteps. The run is 20000
+  iterations (480k timesteps), with a checkpoint every 250 iterations. All curricula end by iteration 3000, so stop
+  early once tracking plateaus.
 - Logs go to `logs/skrl/arti_h1_velocity/`. TensorBoard: `Reward/*`, `Episode_Reward/*`, `Metrics/air_time_mean`,
   `Metrics/peak_height_mean`, `Metrics/air_ratio_*`, `Tracking/*`, `Curriculum/*`.
 - Export with `scripts/pt_to_onnx.py` (unchanged, 45 -> 12). humanoid_controller still needs a matching 45-D obs mode
@@ -117,7 +118,7 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
 - Viewer: `--task Template-Arti-H1-Velocity-Play-Direct-v0` (final curriculum stages, 16 envs).
 - Local check (2048 envs, 600 iterations): alternating steps appear by iteration ~300 (single support 0.98, air ratio
   0.5 / 0.5, air time 0.22 s, peak 4 cm, stance sole tilt 3 deg, episodes reach 20 s). Yaw tracking is still poor at
-  that point (error 0.8 rad/s), so the full 6000 iterations are needed.
+  that point (error 0.8 rad/s), so a long run is needed.
 - Option: `env.balance_support_kp=40.0 env.balance_support_kd=2.0 "env.balance_support_fade_steps=[24000,72000]"` adds
   the old trunk-support crutch, faded out over iterations 1000 -> 3000. It is not needed for stepping, but it lowered
   slip (0.10 vs 0.21 m/s) and yaw error (0.47 vs 0.83 rad/s) at iteration 600.
