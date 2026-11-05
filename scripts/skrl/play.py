@@ -89,6 +89,28 @@ PLAY_PUSH_SCHEDULE = (
 )
 
 
+# Template-Arti-H1-Velocity-*: the same 8 x 5 s layout at the velocity task's command ranges (x +-0.15, y +-0.08,
+# yaw +-0.4) and pushes at its training push size (+-0.3 / +-0.2 m/s).
+VELOCITY_PLAY_COMMAND_SEQUENCE = (
+    ("forward", (0.15, 0.0, 0.0)),
+    ("stand", (0.0, 0.0, 0.0)),
+    ("side_left", (0.0, 0.08, 0.0)),
+    ("backward", (-0.15, 0.0, 0.0)),
+    ("stand", (0.0, 0.0, 0.0)),
+    ("diagonal_right", (0.10, -0.06, 0.0)),
+    ("turn_left", (0.0, 0.0, 0.40)),
+    ("stand", (0.0, 0.0, 0.0)),
+)
+VELOCITY_PLAY_PUSH_SCHEDULE = (
+    (2.5, 0.30, 0.0, 0.0),    # forward: from behind
+    (7.5, 0.0, -0.20, 0.0),   # stand: from the left
+    (12.5, 0.0, 0.20, 0.0),   # side_left: from the right
+    (17.5, -0.30, 0.0, 0.0),  # backward: from the front
+    (22.5, 0.0, 0.0, 0.40),   # stand: yaw kick
+    (27.5, 0.0, 0.20, 0.0),   # diagonal_right: from the right
+)
+
+
 def _apply_play_pushes(env, scale: float):
     """Add the scheduled velocity kick to every env's root when env 0's episode time crosses a push time."""
     t = float(env.episode_length_buf[0].item()) * env.step_dt
@@ -116,9 +138,11 @@ def _overwrite_observation_commands(obs, command_obs: torch.Tensor):
 
 
 def _apply_play_command_sequence(env, obs):
-    required_attrs = ("commands", "command_scale", "episode_length_buf", "max_episode_length")
+    required_attrs = ("commands", "episode_length_buf", "max_episode_length")
     if not all(hasattr(env, attr) for attr in required_attrs):
         return obs
+    if hasattr(env, "command_timer"):
+        env.command_timer[:] = 1.0e9  # velocity task: keep its own command resampling from overriding the sequence
 
     command_values = torch.tensor(
         [command for _, command in PLAY_COMMAND_SEQUENCE],
@@ -137,7 +161,7 @@ def _apply_play_command_sequence(env, obs):
             flush=True,
         )
         env._last_play_command_id = current_command_id
-    return _overwrite_observation_commands(obs, env.commands * env.command_scale)
+    return _overwrite_observation_commands(obs, env.commands * getattr(env, "command_scale", 1.0))
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -181,6 +205,12 @@ def main(argv: list[str] | None = None) -> None:
     env_cfg, agent_cfg = resolve_task_config(args_cli.task, agent_cfg_entry_point, play_mode=False)
     algorithm = resolve_skrl_algorithm(agent_cfg, args_cli.algorithm)
 
+    if "Velocity" in args_cli.task:
+        global PLAY_COMMAND_SEQUENCE, PLAY_PUSH_SCHEDULE
+        PLAY_COMMAND_SEQUENCE, PLAY_PUSH_SCHEDULE = VELOCITY_PLAY_COMMAND_SEQUENCE, VELOCITY_PLAY_PUSH_SCHEDULE
+        # the velocity task resets with a random yaw; face +x so the commands read the same in the side-view video
+        if hasattr(env_cfg, "reset_yaw_range"):
+            env_cfg.reset_yaw_range = (0.0, 0.0)
     env_cfg.episode_length_s = PLAY_COMMAND_DURATION_S * len(PLAY_COMMAND_SEQUENCE)
     # Training-only balance support torque must never act during play.
     if hasattr(env_cfg, "balance_support_kp"):
@@ -193,8 +223,13 @@ def main(argv: list[str] | None = None) -> None:
         env_cfg.viewer.origin_type = "env"
         env_cfg.viewer.env_index = 0
         env_cfg.viewer.asset_name = None
-        env_cfg.viewer.eye = VIDEO_CAMERA_EYE
-        env_cfg.viewer.lookat = VIDEO_CAMERA_LOOKAT
+        velocity = "Velocity" in args_cli.task
+        if velocity:
+            # the velocity task walks ~1 m per segment: follow the robot root from the side, closer than the default
+            env_cfg.viewer.origin_type = "asset_root"
+            env_cfg.viewer.asset_name = "robot"
+        env_cfg.viewer.eye = (0.0, -1.6, 0.55) if velocity else VIDEO_CAMERA_EYE
+        env_cfg.viewer.lookat = (0.0, 0.0, 0.15) if velocity else VIDEO_CAMERA_LOOKAT
         env_cfg.viewer.resolution = (args_cli.video_width, args_cli.video_height)
     pre_launch_video_config(env_cfg, args_cli)
 
