@@ -111,6 +111,13 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # and the linear one only slightly tighter than Microduck's 0.1 (standing under a 0.1 m/s command still earns 0.72).
     track_linear_velocity_std = math.sqrt(0.03)
     track_angular_velocity_std = math.sqrt(0.5)
+    # Fine tracking terms on top (commanded components only, no roll / pitch / vz). The coarse stds above leave the 480k
+    # run (11-05) at 36 % of a lateral command (vy 0.03 for 0.08: exp(-0.0025 / 0.03) = 0.92, almost no loss) and with a
+    # constant -0.03 rad/s yaw drift. The coarse terms keep the early gradient, these sharpen the converged gait.
+    rew_track_linear_velocity_fine = 1.0
+    track_linear_velocity_fine_std = math.sqrt(0.004)  # 0.05 m/s error -> 0.54
+    rew_track_angular_velocity_fine = 1.0
+    track_angular_velocity_fine_std = math.sqrt(0.03)  # 0.1 rad/s error -> 0.72
     rew_upright = 2.0
     upright_std = math.sqrt(0.05)
     rew_pose = 1.0
@@ -141,6 +148,10 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     rew_air_time = 3.0
     # Deviation from mjlab: count a foot's air time only while the other foot is in contact (Isaac Lab biped air time).
     air_time_single_support_only = True
+    # Also require alternation: a foot's swing pays only if the other foot lifted off since this foot's last lift-off.
+    # Trial 11-05 with swing_foot_speed: the policy stood on the right leg and tapped the left foot (air ratio
+    # 0.89 / 0.01), farming the window with one leg.
+    air_time_require_alternation = True
     # Min 0.1 s (not 0.2): with 0.2 s no foot ever left the ground in a 600-iteration trial (the policy skated).
     # With 0.1 s it stepped (single support 0.98, air time 0.22 s, peak 4 cm by iteration 600).
     air_time_min_s = 0.1
@@ -152,6 +163,11 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # Foot slip: sum over feet in contact of |v_xy|^2. Microduck uses -0.1 for pivot turning. At -0.1 ARTI-H1 learned to
     # skate on flat soles instead of stepping, so it is -1.0 here.
     rew_foot_slip = -1.0
+    # Swing foot speed relative to the trunk, squared, above a free band: sum over feet in the air of
+    # relu(|v_foot_xy - v_trunk_xy| - free)^2. The 480k policy flicked each swing leg ~10 cm forward and back at
+    # 1.0-1.7 m/s (also when stepping in place): nothing penalised swing-foot motion. A 0.15 m/s stride needs ~0.5 m/s.
+    rew_swing_foot_speed = -1.0
+    swing_foot_free_speed = 0.5
     # Lowest sole-corner height (contact patch +-foot_sole_half_length / width) below which a foot counts as in contact
     # (no contact sensor). Also the foot height used by foot_clearance / foot_swing_height.
     foot_contact_height = 0.008
