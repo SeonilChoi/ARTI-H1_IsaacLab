@@ -152,6 +152,11 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # Trial 11-05 with swing_foot_speed: the policy stood on the right leg and tapped the left foot (air ratio
     # 0.89 / 0.01), farming the window with one leg.
     air_time_require_alternation = True
+    # 11-05 full run: the gate above with "other foot lifted at all" was beaten from iteration ~100 (air ratio 0.91 /
+    # 0.06: right foot blips, left foot swings). The other foot must now complete a real swing (>= air_time_min_s),
+    # and the ~1 s average air ratios of the two feet are pushed together (|ema_L - ema_R|, gated on a moving command).
+    rew_air_asymmetry = -3.0
+    air_asymmetry_tau_s = 1.0
     # Min 0.1 s (not 0.2): with 0.2 s no foot ever left the ground in a 600-iteration trial (the policy skated).
     # With 0.1 s it stepped (single support 0.98, air time 0.22 s, peak 4 cm by iteration 600).
     air_time_min_s = 0.1
