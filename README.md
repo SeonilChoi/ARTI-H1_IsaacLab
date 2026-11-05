@@ -98,6 +98,12 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
   - air_time 3 (window 0.1-0.5 s, counted only in single support), foot_clearance -2 / foot_swing_height -0.25
     (target 3 cm), foot_slip -1.0 (Microduck -0.1; at -0.1 ARTI-H1 skated instead of stepping)
   - feet_too_close -1 (in place of Microduck's self-collision term), foot_flat -10 (sin^2 sole tilt in contact)
+  - track_linear_velocity_fine / track_angular_velocity_fine +1 / +1 (commanded vx, vy / wz only, std^2 0.004 /
+    0.03). The 480k run reached only 36 % of a lateral command and drifted -0.03 rad/s in yaw with the coarse terms alone.
+  - swing_foot_speed -1: relu(|v_swing_foot_xy - v_trunk_xy| - 0.5 m/s)^2. The 480k policy flicked each swing leg
+    ~10 cm forward and back at 1.0-1.7 m/s, even when stepping in place. Nothing penalised swing-foot motion.
+  - The air time pays only when the feet alternate: a foot's swing counts only if the other foot lifted since this
+    foot's last lift-off. With swing_foot_speed alone, a trial stood on one leg and tapped the other foot.
   - Contact comes from the lowest sole corner (< 8 mm), not the sole centre. With the sole centre, standing on
     tilted soles counted as "in air" and the policy farmed air time.
   - Every `Reward/<penalty>` in TensorBoard must stay <= 0.
@@ -112,7 +118,8 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
   iterations (480k timesteps), with a checkpoint every 250 iterations. All curricula end by iteration 3000, so stop
   early once tracking plateaus.
 - Logs go to `logs/skrl/arti_h1_velocity/`. TensorBoard: `Reward/*`, `Episode_Reward/*`, `Metrics/air_time_mean`,
-  `Metrics/peak_height_mean`, `Metrics/air_ratio_*`, `Tracking/*`, `Curriculum/*`.
+  `Metrics/peak_height_mean`, `Metrics/air_ratio_*` (both ~0.5; one ~0.9 = one-leg tapping),
+  `Metrics/swing_foot_rel_speed_mean`, `Metrics/rewarded_swing_ratio`, `Tracking/*`, `Curriculum/*`.
 - Export with `scripts/pt_to_onnx.py` (unchanged, 45 -> 12). humanoid_controller still needs a matching 45-D obs mode
   (no gait clock / nominal table) before the policy can run on the robot.
 - Viewer: `--task Template-Arti-H1-Velocity-Play-Direct-v0` (final curriculum stages, 16 envs).

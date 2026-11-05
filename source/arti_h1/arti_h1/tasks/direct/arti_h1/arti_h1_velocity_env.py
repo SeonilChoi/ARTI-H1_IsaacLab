@@ -27,7 +27,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
     REWARD_TERMS = (
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
-        "feet_too_close", "foot_flat", "action_out_of_range",
+        "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
+        "swing_foot_speed",
     )
 
     # Shared ARTI-H1 robot models (plain functions on the AMP env, they only use self.cfg / self.robot / buffers below).
@@ -105,6 +106,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_air_time = torch.zeros(n, 2, device=dev)
         self.feet_contact = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self.feet_peak_height = torch.zeros(n, 2, device=dev)
+        # alternation gate for air time: a swing counts only if the other foot lifted since this foot's last lift-off
+        self.feet_swing_eligible = torch.ones(n, 2, dtype=torch.bool, device=dev)
+        self.feet_other_lifted = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self._feet_height_obs = torch.zeros(n, 2, device=dev)
         self.episode_sums = {k: torch.zeros(n, device=dev) for k in self.REWARD_TERMS}
         self._body_mass = None
@@ -216,6 +220,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         height, self._sole_tilt_sq = self._sole_heights()
         contact = height < self.cfg.foot_contact_height
         first_contact = contact & ~self.feet_contact
+        lift_off = ~contact & self.feet_contact
+        self.feet_swing_eligible.copy_(torch.where(lift_off, self.feet_other_lifted, self.feet_swing_eligible))
+        self.feet_other_lifted.copy_((self.feet_other_lifted & ~lift_off) | lift_off.flip(-1))
         # in-place updates: the buffers must stay normal tensors when stepped under torch.inference_mode (play / eval)
         self.feet_air_time.copy_(torch.where(contact, torch.zeros_like(self.feet_air_time), self.feet_air_time + self.step_dt))
         self.feet_peak_height.copy_(torch.where(contact, self.feet_peak_height, torch.maximum(self.feet_peak_height, height)))
@@ -279,7 +286,15 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         if cfg.air_time_single_support_only:
             # only while the other foot carries the robot (Isaac Lab biped air time): no reward for hopping
             in_window &= contact.flip(-1)
-        foot_vel_xy = torch.linalg.norm(self._foot_velocities()[..., :2], dim=-1)
+        if cfg.air_time_require_alternation:
+            in_window &= self.feet_swing_eligible
+        foot_vel_w = self._foot_velocities()[..., :2]
+        foot_vel_xy = torch.linalg.norm(foot_vel_w, dim=-1)
+        # swing foot speed relative to the trunk: a stride needs ~0.5 m/s, the forward-back leg flick seen at 480k
+        # (foot +-10 cm in front of / behind the hip even when stepping in place) runs at 1.0-1.7 m/s
+        swing_rel_speed = torch.linalg.norm(foot_vel_w - d.root_lin_vel_w.torch[:, None, :2], dim=-1) * (~contact).float()
+        fine_lin_err = torch.sum(torch.square(self.commands[:, :2] - lin_b[:, :2]), dim=-1)
+        fine_yaw_err = torch.square(self.commands[:, 2] - ang_b[:, 2])
         swing_err = torch.square(self.feet_peak_height / cfg.foot_target_height - 1.0) * first_contact.float()
         feet = self._foot_positions()
         heading = torch.atan2(2.0 * (root_quat[:, 3] * root_quat[:, 2] + root_quat[:, 0] * root_quat[:, 1]),
@@ -303,6 +318,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "feet_too_close": torch.relu(cfg.foot_min_width - lateral) / 0.02,
             "foot_flat": torch.sum(self._sole_tilt_sq * contact.float(), dim=-1),
             "action_out_of_range": torch.clamp(torch.relu(self.actions.abs() - 1.0).sum(-1), max=cfg.action_out_of_range_cap),
+            "track_linear_velocity_fine": torch.exp(-fine_lin_err / cfg.track_linear_velocity_fine_std**2),
+            "track_angular_velocity_fine": torch.exp(-fine_yaw_err / cfg.track_angular_velocity_fine_std**2),
+            "swing_foot_speed": torch.sum(torch.square(torch.relu(swing_rel_speed - cfg.swing_foot_free_speed)), dim=-1),
         }
         weights = {
             "track_linear_velocity": cfg.rew_track_linear_velocity,
@@ -320,6 +338,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "feet_too_close": cfg.rew_feet_too_close,
             "foot_flat": cfg.rew_foot_flat,
             "action_out_of_range": cfg.rew_action_out_of_range,
+            "track_linear_velocity_fine": cfg.rew_track_linear_velocity_fine,
+            "track_angular_velocity_fine": cfg.rew_track_angular_velocity_fine,
+            "swing_foot_speed": cfg.rew_swing_foot_speed,
         }
         landings = first_contact.float()
         mean_peak_at_landing = (self.feet_peak_height * landings).sum() / landings.sum().clamp_min(1.0)
@@ -343,8 +364,10 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "Metrics/air_time_mean": (self.feet_air_time * in_air).sum() / in_air.sum().clamp_min(1),
             "Metrics/peak_height_mean": mean_peak_at_landing,
             "Metrics/slip_velocity_mean": (foot_vel_xy * contact).sum() / contact.sum().clamp_min(1),
+            "Metrics/swing_foot_rel_speed_mean": swing_rel_speed.sum() / (~contact).sum().clamp_min(1),
             "Metrics/air_ratio_left": in_air[:, 0].float().mean(),
             "Metrics/air_ratio_right": in_air[:, 1].float().mean(),
+            "Metrics/rewarded_swing_ratio": in_window.float().sum() / in_air.float().sum().clamp_min(1),
             "Metrics/feet_lateral_distance_m": lateral.mean(),
             "Metrics/stance_sole_tilt_deg": (torch.rad2deg(torch.asin(self._sole_tilt_sq.sqrt().clamp(max=1.0))) * contact).sum()
             / contact.sum().clamp_min(1),
@@ -417,6 +440,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_air_time[env_ids] = 0.0
         self.feet_contact[env_ids] = True
         self.feet_peak_height[env_ids] = 0.0
+        self.feet_swing_eligible[env_ids] = True
+        self.feet_other_lifted[env_ids] = True
         self._feet_height_obs[env_ids] = 0.0
         self.mti3_imu.reset(env_ids, root_state[:, 3:7], root_state[:, 10:13])
         if self.cfg.joint_obs_offset_range > 0.0 or self.cfg.joint_obs_offset_range_by_type:
