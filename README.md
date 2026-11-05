@@ -102,8 +102,10 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
     0.03). The 480k run reached only 36 % of a lateral command and drifted -0.03 rad/s in yaw with the coarse terms alone.
   - swing_foot_speed -1: relu(|v_swing_foot_xy - v_trunk_xy| - 0.5 m/s)^2. The 480k policy flicked each swing leg
     ~10 cm forward and back at 1.0-1.7 m/s, even when stepping in place. Nothing penalised swing-foot motion.
-  - The air time pays only when the feet alternate: a foot's swing counts only if the other foot lifted since this
-    foot's last lift-off. With swing_foot_speed alone, a trial stood on one leg and tapped the other foot.
+  - The air time pays only when the feet alternate: a foot's swing counts only if the other foot completed a real swing
+    (air time >= 0.1 s) since this foot's last lift-off. air_asymmetry -3 penalises |left - right| of the ~1 s average
+    air ratios. With swing_foot_speed alone a trial stood on one leg and tapped the other foot. A weaker gate ("the
+    other foot lifted at all") was beaten from iteration ~100: the right foot blipped and only the left foot swung.
   - Contact comes from the lowest sole corner (< 8 mm), not the sole centre. With the sole centre, standing on
     tilted soles counted as "in air" and the policy farmed air time.
   - Every `Reward/<penalty>` in TensorBoard must stay <= 0.

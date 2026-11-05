@@ -28,7 +28,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed",
+        "swing_foot_speed", "air_asymmetry",
     )
 
     # Shared ARTI-H1 robot models (plain functions on the AMP env, they only use self.cfg / self.robot / buffers below).
@@ -106,9 +106,11 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_air_time = torch.zeros(n, 2, device=dev)
         self.feet_contact = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self.feet_peak_height = torch.zeros(n, 2, device=dev)
-        # alternation gate for air time: a swing counts only if the other foot lifted since this foot's last lift-off
+        # alternation gate for air time: a swing counts only if the other foot completed a real swing (air time >=
+        # air_time_min_s) since this foot's last lift-off
         self.feet_swing_eligible = torch.ones(n, 2, dtype=torch.bool, device=dev)
-        self.feet_other_lifted = torch.ones(n, 2, dtype=torch.bool, device=dev)
+        self.feet_other_swung = torch.ones(n, 2, dtype=torch.bool, device=dev)
+        self.feet_air_ema = torch.zeros(n, 2, device=dev)  # ~1 s moving average of "foot in the air", per foot
         self._feet_height_obs = torch.zeros(n, 2, device=dev)
         self.episode_sums = {k: torch.zeros(n, device=dev) for k in self.REWARD_TERMS}
         self._body_mass = None
@@ -221,8 +223,11 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         contact = height < self.cfg.foot_contact_height
         first_contact = contact & ~self.feet_contact
         lift_off = ~contact & self.feet_contact
-        self.feet_swing_eligible.copy_(torch.where(lift_off, self.feet_other_lifted, self.feet_swing_eligible))
-        self.feet_other_lifted.copy_((self.feet_other_lifted & ~lift_off) | lift_off.flip(-1))
+        real_swing = first_contact & (self.feet_air_time >= self.cfg.air_time_min_s)
+        self.feet_swing_eligible.copy_(torch.where(lift_off, self.feet_other_swung, self.feet_swing_eligible))
+        self.feet_other_swung.copy_((self.feet_other_swung & ~lift_off) | real_swing.flip(-1))
+        alpha = min(1.0, self.step_dt / self.cfg.air_asymmetry_tau_s)
+        self.feet_air_ema.add_(alpha * ((~contact).float() - self.feet_air_ema))
         # in-place updates: the buffers must stay normal tensors when stepped under torch.inference_mode (play / eval)
         self.feet_air_time.copy_(torch.where(contact, torch.zeros_like(self.feet_air_time), self.feet_air_time + self.step_dt))
         self.feet_peak_height.copy_(torch.where(contact, self.feet_peak_height, torch.maximum(self.feet_peak_height, height)))
@@ -321,6 +326,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "track_linear_velocity_fine": torch.exp(-fine_lin_err / cfg.track_linear_velocity_fine_std**2),
             "track_angular_velocity_fine": torch.exp(-fine_yaw_err / cfg.track_angular_velocity_fine_std**2),
             "swing_foot_speed": torch.sum(torch.square(torch.relu(swing_rel_speed - cfg.swing_foot_free_speed)), dim=-1),
+            "air_asymmetry": torch.abs(self.feet_air_ema[:, 0] - self.feet_air_ema[:, 1]) * moving,
         }
         weights = {
             "track_linear_velocity": cfg.rew_track_linear_velocity,
@@ -341,6 +347,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "track_linear_velocity_fine": cfg.rew_track_linear_velocity_fine,
             "track_angular_velocity_fine": cfg.rew_track_angular_velocity_fine,
             "swing_foot_speed": cfg.rew_swing_foot_speed,
+            "air_asymmetry": cfg.rew_air_asymmetry,
         }
         landings = first_contact.float()
         mean_peak_at_landing = (self.feet_peak_height * landings).sum() / landings.sum().clamp_min(1.0)
@@ -441,7 +448,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_contact[env_ids] = True
         self.feet_peak_height[env_ids] = 0.0
         self.feet_swing_eligible[env_ids] = True
-        self.feet_other_lifted[env_ids] = True
+        self.feet_other_swung[env_ids] = True
+        self.feet_air_ema[env_ids] = 0.0
         self._feet_height_obs[env_ids] = 0.0
         self.mti3_imu.reset(env_ids, root_state[:, 3:7], root_state[:, 10:13])
         if self.cfg.joint_obs_offset_range > 0.0 or self.cfg.joint_obs_offset_range_by_type:
