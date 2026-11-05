@@ -28,7 +28,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed", "air_asymmetry",
+        "swing_foot_speed", "air_asymmetry", "stance_knee_flex",
     )
 
     # Shared ARTI-H1 robot models (plain functions on the AMP env, they only use self.cfg / self.robot / buffers below).
@@ -110,6 +110,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         # air_time_min_s) since this foot's last lift-off
         self.feet_swing_eligible = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self.feet_other_swung = torch.ones(n, 2, dtype=torch.bool, device=dev)
+        self._knee_ids = [list(self.robot.data.joint_names).index(f"{s}_knee") for s in ("left", "right")]  # feet order
         self.feet_air_ema = torch.zeros(n, 2, device=dev)  # ~1 s moving average of "foot in the air", per foot
         self._feet_height_obs = torch.zeros(n, 2, device=dev)
         self.episode_sums = {k: torch.zeros(n, device=dev) for k in self.REWARD_TERMS}
@@ -298,6 +299,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         # swing foot speed relative to the trunk: a stride needs ~0.5 m/s, the forward-back leg flick seen at 480k
         # (foot +-10 cm in front of / behind the hip even when stepping in place) runs at 1.0-1.7 m/s
         swing_rel_speed = torch.linalg.norm(foot_vel_w - d.root_lin_vel_w.torch[:, None, :2], dim=-1) * (~contact).float()
+        knee_flex = q_rel[:, self._knee_ids]  # + = more flexed than the default pose (default knee 0.2 rad)
         fine_lin_err = torch.sum(torch.square(self.commands[:, :2] - lin_b[:, :2]), dim=-1)
         fine_yaw_err = torch.square(self.commands[:, 2] - ang_b[:, 2])
         swing_err = torch.square(self.feet_peak_height / cfg.foot_target_height - 1.0) * first_contact.float()
@@ -327,6 +329,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "track_angular_velocity_fine": torch.exp(-fine_yaw_err / cfg.track_angular_velocity_fine_std**2),
             "swing_foot_speed": torch.sum(torch.square(torch.relu(swing_rel_speed - cfg.swing_foot_free_speed)), dim=-1),
             "air_asymmetry": torch.abs(self.feet_air_ema[:, 0] - self.feet_air_ema[:, 1]) * moving,
+            "stance_knee_flex": torch.sum(torch.square(torch.relu(knee_flex - cfg.stance_knee_free_flex)) * contact.float(), dim=-1),
         }
         weights = {
             "track_linear_velocity": cfg.rew_track_linear_velocity,
@@ -348,6 +351,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "track_angular_velocity_fine": cfg.rew_track_angular_velocity_fine,
             "swing_foot_speed": cfg.rew_swing_foot_speed,
             "air_asymmetry": cfg.rew_air_asymmetry,
+            "stance_knee_flex": cfg.rew_stance_knee_flex,
         }
         landings = first_contact.float()
         mean_peak_at_landing = (self.feet_peak_height * landings).sum() / landings.sum().clamp_min(1.0)
@@ -374,6 +378,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "Metrics/swing_foot_rel_speed_mean": swing_rel_speed.sum() / (~contact).sum().clamp_min(1),
             "Metrics/air_ratio_left": in_air[:, 0].float().mean(),
             "Metrics/air_ratio_right": in_air[:, 1].float().mean(),
+            "Metrics/stance_knee_flex_mean": (knee_flex * contact).sum() / contact.sum().clamp_min(1),
             "Metrics/rewarded_swing_ratio": in_window.float().sum() / in_air.float().sum().clamp_min(1),
             "Metrics/feet_lateral_distance_m": lateral.mean(),
             "Metrics/stance_sole_tilt_deg": (torch.rad2deg(torch.asin(self._sole_tilt_sq.sqrt().clamp(max=1.0))) * contact).sum()

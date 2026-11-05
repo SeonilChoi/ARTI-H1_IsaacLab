@@ -106,6 +106,8 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
     (air time >= 0.1 s) since this foot's last lift-off. air_asymmetry -3 penalises |left - right| of the ~1 s average
     air ratios. With swing_foot_speed alone a trial stood on one leg and tapped the other foot. A weaker gate ("the
     other foot lifted at all") was beaten from iteration ~100: the right foot blipped and only the left foot swung.
+  - stance_knee_flex -5: relu(stance knee - default - 0.2 rad)^2. Without it a run settled into a 0.85 rad stance-knee
+    squat, where the standing pose reward is ~0, so it never learned to stand still.
   - Contact comes from the lowest sole corner (< 8 mm), not the sole centre. With the sole centre, standing on
     tilted soles counted as "in air" and the policy farmed air time.
   - Every `Reward/<penalty>` in TensorBoard must stay <= 0.
