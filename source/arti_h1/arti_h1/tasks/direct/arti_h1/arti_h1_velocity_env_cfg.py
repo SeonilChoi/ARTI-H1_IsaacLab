@@ -157,6 +157,11 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # and the ~1 s average air ratios of the two feet are pushed together (|ema_L - ema_R|, gated on a moving command).
     rew_air_asymmetry = -3.0
     air_asymmetry_tau_s = 1.0
+    # Stance-knee crouch: sum over feet in contact of relu(knee - default - free)^2. The 11-05 local run walked and
+    # stood on a 0.85 rad stance knee (default 0.2, 480k server run 0.38). In that squat the standing pose reward is
+    # exp(-5.8) ~ 0, so it never learned to stand still (stepped in place under a zero command, fell when pushed).
+    rew_stance_knee_flex = -5.0
+    stance_knee_free_flex = 0.2
     # Min 0.1 s (not 0.2): with 0.2 s no foot ever left the ground in a 600-iteration trial (the policy skated).
     # With 0.1 s it stepped (single support 0.98, air time 0.22 s, peak 4 cm by iteration 600).
     air_time_min_s = 0.1
