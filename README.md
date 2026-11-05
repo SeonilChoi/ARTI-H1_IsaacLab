@@ -127,6 +127,12 @@ This task is a separate line of work, ported from [microduck_rl](https://github.
 - Export with `scripts/pt_to_onnx.py` (unchanged, 45 -> 12). humanoid_controller still needs a matching 45-D obs mode
   (no gait clock / nominal table) before the policy can run on the robot.
 - Viewer: `--task Template-Arti-H1-Velocity-Play-Direct-v0` (final curriculum stages, 16 envs).
+- Video (40 s: forward / stand / left / back / stand / diagonal / turn / stand, with pushes at the training size):
+  `TASK=Template-Arti-H1-Velocity-Direct-v0 ALGORITHM=PPO bash scripts/tuning/record_video.sh <agent_N.pt> <name>
+  env.curriculum_step_offset=480000 --num_envs 1`. The camera follows the robot, which starts facing +x.
+- `server/vel_local_480k.pt` + `server/videos/h1_vel_local_480k.mp4`: the local run (10k iterations fresh, then 10k
+  fine-tuned with stance_knee_flex). Push eval: 0 falls, standing 100 % double support, forward ~90 %, yaw 90-99 %,
+  lateral only 24-49 % of the command.
 - Local check (2048 envs, 600 iterations): alternating steps appear by iteration ~300 (single support 0.98, air ratio
   0.5 / 0.5, air time 0.22 s, peak 4 cm, stance sole tilt 3 deg, episodes reach 20 s). Yaw tracking is still poor at
   that point (error 0.8 rad/s), so a long run is needed.
