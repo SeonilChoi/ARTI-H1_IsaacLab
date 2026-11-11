@@ -91,6 +91,16 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # Fraction of envs commanded to spin on the spot (lin = 0, |wz| in [0.4, 1] * max). Microduck: independent uniform
     # sampling made turning in place ~2 % of the data, so it never trained.
     turn_in_place_fraction = 0.15
+    # turn-in-place |wz| drawn from [min_frac, 1] * 0.4. Was 0.4 (|wz| >= 0.16): the policy then stood still for
+    # |wz| = 0.1 and for wz = -0.2 (but turned for +0.2).
+    turn_in_place_min_frac = 0.25
+    # pure forward / backward commands (|vx| in [0.3, 1] * 0.15, vy = wz = 0). Uniform sampling gives
+    # |vy| < 0.02 and |wz| < 0.05 only ~3 % of the time, too rare for gait_symmetry to act.
+    straight_walk_fraction = 0.15
+    # pure sideways commands (|vy| in [0.3, 1] * 0.08, vx = wz = 0), sampled after the straight bucket. Off by default
+    # (RSI r04 turns it on): without it a pure max-|vy| command is rare (vy is uniform and mixed with vx / wz), and the
+    # 11-09 eval tracked only ~35 % of a 0.08 m/s sideways command.
+    lateral_walk_fraction = 0.0
     # All-zero command fraction (the deployment idle state), ramped by step (env steps = iterations * 24).
     standing_env_stages = (
         (0, 0.02),
@@ -116,8 +126,20 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # constant -0.03 rad/s yaw drift. The coarse terms keep the early gradient, these sharpen the converged gait.
     rew_track_linear_velocity_fine = 1.0
     track_linear_velocity_fine_std = math.sqrt(0.004)  # 0.05 m/s error -> 0.54
-    rew_track_angular_velocity_fine = 1.0
-    track_angular_velocity_fine_std = math.sqrt(0.03)  # 0.1 rad/s error -> 0.72
+    # Was 1.0 / sqrt(0.03): standing still under a 0.2 rad/s turn command kept 0.26 of it, and the 11-06 policies
+    # stood for |wz| <= 0.1 and for one sign of |wz| = 0.2. sqrt(0.01): standing under 0.2 keeps 0.02, under 0.1 0.37.
+    rew_track_angular_velocity_fine = 1.5
+    track_angular_velocity_fine_std = math.sqrt(0.01)  # 0.1 rad/s error -> 0.37
+    # Gait start. Both sharpened yaw and the symmetry policies still stood still when a |wz| <= 0.2 turn (or 0.1) was
+    # commanded from standstill, although they tracked it once walking. Penalty per step while a motion is commanded
+    # and both feet have been down longer than max_double_support_s (walking double support is ~0.05 s per step).
+    rew_stand_still_commanded = -2.0
+    max_double_support_s = 0.3
+    # Lateral-only tracking (RSI). Policies reach ~33 % of a 0.08 m/s lateral command (fine term: a 0.05 m/s miss still
+    # keeps 0.54). Off by default; RSI rounds set it by override.
+    rew_track_lateral_velocity = 0.0
+    track_lateral_velocity_std = 0.03
+    lateral_cmd_min = 0.02
     rew_upright = 2.0
     upright_std = math.sqrt(0.05)
     rew_pose = 1.0
@@ -157,6 +179,60 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # and the ~1 s average air ratios of the two feet are pushed together (|ema_L - ema_R|, gated on a moving command).
     rew_air_asymmetry = -3.0
     air_asymmetry_tau_s = 1.0
+    # gait symmetry. With the legs not mirror images (right leg = left leg rotated pi about z), the knee-fine-tune policy
+    # lifted the right foot 0.3-1.3 cm lower than the left (2.7-3.1 vs 3.3-4.0 cm), landed it 0.5 cm further forward
+    # and 1.1 cm wider when walking forward, and stepped the left foot forward / the right foot back in place (yaw drift).
+    # Penalty on per-foot landing averages (alpha per landing, ~4-swing window), left vs mirrored right:
+    # (|peak_L - peak_R| / peak_scale + |x_L - x_R| / pos_scale + |y_L - y_R| / pos_scale) for pure forward / backward
+    # commands only (lateral / turn commands move the feet asymmetrically by design).
+    rew_gait_symmetry = -1.0
+    gait_symmetry_alpha = 0.25
+    gait_symmetry_peak_scale = 0.01
+    gait_symmetry_pos_scale = 0.02
+    gait_symmetry_max_vy = 0.02
+    gait_symmetry_max_wz = 0.05
+    gait_symmetry_nominal_y = 0.065
+    # mirror_peak: per landing, |swing peak - population mean peak of the mirror cell (other foot, negated vy / wz command
+    # signs)| / mirror_peak_scale, for every walking command. Off by default (RSI r05 turns it on): the 11-09/10 evals
+    # showed the leading leg lifting ~0.3-0.4 cm higher on one side for sideways / large-turn commands, which
+    # gait_symmetry (pure forward / backward only) never sees. Table EMA rate per step with landings in the cell.
+    rew_mirror_peak = 0.0
+    mirror_peak_scale = 0.01
+    mirror_peak_alpha = 0.05
+    # Open Duck Mini actor history: also observe the two older actions (t-1, t-2) and the commanded joint target
+    # (after rate limit / clamps, minus default) before the command block -> 45 + 36 = 81-D. Commands stay last.
+    obs_action_history = False
+    # Joint target slew limit (rad/s), applied once per control step to q_des before the actuator model (Open Duck
+    # max_motor_velocity 5.24). The real controller must apply the same limit. 0 = off.
+    target_rate_limit = 0.0
+    # First-order low-pass on the joint target each control step, before the rate limit: target = prev + alpha * (new - prev).
+    # 1 (or 0) = off. 11-11 real r12 run: 30 Hz period-2 chatter (the real joints follow the target faster than the sim).
+    target_lowpass_alpha = 1.0
+    # Knee flexion floor: sum over knees of relu(knee_extension_min - knee)^2 (absolute joint angle, default 0.2 rad).
+    # NOTE the knee sign: q = 0 is a 90 deg bend and +q EXTENDS the leg (hip-ankle 10.5 cm at 0, 11.5 at 0.2, 8.2 at
+    # -0.4), the same in both legs (right leg = left rotated pi about z, so it bends the other way in the world). So
+    # this caps swing FLEXION (foot lift), not hyperextension. The 11-11 real r12 walk swung the knee to -0.4 rad
+    # (sim the same); a cap here trades foot clearance for a smaller gait. 0 = off.
+    rew_knee_extension = 0.0
+    knee_extension_min = 0.0
+    # Reference swing imitation (Open Duck Mini / Disney BDX style, but phase-free for the policy: the reference is
+    # anchored to each foot's own lift-off, s = air_time / ref_swing_time). Swing-foot cost per step, capped:
+    # (z - h sin(pi s))^2 / sz^2 + (x - x_ref)^2 / sx^2 + (y - y_ref)^2 / sy^2 in the heading frame relative to the
+    # root (y mirrored for the right foot). x_ref = -Ax cos(pi s), Ax = vx * ref_stance_time / 2 (Raibert touchdown);
+    # y_ref = nominal_y - side * Ay cos(pi s), Ay = vy * ref_stance_time / 2; z_ref = 0 once s > 1 (no long swings).
+    # r05 swings: 0.30-0.40 s, peak 3.1 cm, touchdown x +1.5 cm at vx 0.15. Off by default (RSI r10 turns it on).
+    rew_ref_swing = 0.0
+    ref_swing_time = 0.35
+    ref_stance_time = 0.40
+    ref_sigma_z = 0.01
+    ref_sigma_x = 0.03
+    ref_sigma_y = 0.02
+    ref_cost_cap = 10.0
+    # Straight hips: sum over hip_yaw of (q - default)^2 / std^2 while no turn is commanded (|wz cmd| < max_wz).
+    # r05 walked with hip_yaw L +3.8 / R -6.7 deg off default for straight commands (feet toed differently).
+    rew_hip_yaw_straight = 0.0
+    hip_yaw_straight_std = 0.05
+    hip_yaw_straight_max_wz = 0.05
     # Stance-knee crouch: sum over feet in contact of relu(knee - default - free)^2. The 11-05 local run walked and
     # stood on a 0.85 rad stance knee (default 0.2, 480k server run 0.38). In that squat the standing pose reward is
     # exp(-5.8) ~ 0, so it never learned to stand still (stepped in place under a zero command, fell when pushed).
@@ -168,7 +244,10 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     air_time_max_s = 0.5
     # Foot clearance: |sole height - target| * |foot v_xy|. Swing height: (peak / target - 1)^2 at each landing.
     rew_foot_clearance = -2.0
-    rew_foot_swing_height = -0.25
+    # -0.25 (Microduck) left the per-foot peaks free: the left foot rose 3.2-3.7 cm, the right 2.8-3.0 cm, for every
+    # command. A 0.4 cm miss costs (0.4 / 3)^2 = 0.018 per landing, so -10 makes it ~0.2 / s per foot. Per landing
+    # (not a running average), so standing still does not avoid it for free.
+    rew_foot_swing_height = -10.0
     foot_target_height = 0.03  # Microduck 0.02 m. The old ARTI-H1 reference swing peaked at 0.03 m.
     # Foot slip: sum over feet in contact of |v_xy|^2. Microduck uses -0.1 for pivot turning. At -0.1 ARTI-H1 learned to
     # skate on flat soles instead of stepping, so it is -1.0 here.

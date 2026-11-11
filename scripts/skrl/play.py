@@ -171,6 +171,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--video_width", type=int, default=1920, help="Recorded video width in pixels.")
     parser.add_argument("--video_height", type=int, default=1080, help="Recorded video height in pixels.")
     parser.add_argument("--no_push", action="store_true", default=False, help="Disable the scheduled play pushes.")
+    parser.add_argument("--camera_follow", action="store_true", default=False, help="Move the video camera with the robot.")
+    parser.add_argument("--camera", choices=("side", "front"), default="side", help="Video camera: side or front (velocity task).")
     parser.add_argument("--push_scale", type=float, default=1.0, help="Scale of the scheduled play pushes.")
     cli_args_skrl.add_skrl_args(parser)
     add_launcher_args(parser)
@@ -228,8 +230,14 @@ def main(argv: list[str] | None = None) -> None:
             # the velocity task walks ~1 m per segment: follow the robot root from the side, closer than the default
             env_cfg.viewer.origin_type = "asset_root"
             env_cfg.viewer.asset_name = "robot"
-        env_cfg.viewer.eye = (0.0, -1.6, 0.55) if velocity else VIDEO_CAMERA_EYE
-        env_cfg.viewer.lookat = (0.0, 0.0, 0.15) if velocity else VIDEO_CAMERA_LOOKAT
+        if velocity and args_cli.camera == "front":
+            # fixed camera in front of the start point (robot walks toward +x), far enough to keep the whole sequence
+            # (asset_root: placed at the robot's start position, it does not move afterwards)
+            env_cfg.viewer.eye = (2.6, 0.0, 0.7)
+            env_cfg.viewer.lookat = (0.0, 0.0, 0.2)
+        else:
+            env_cfg.viewer.eye = (0.0, -1.6, 0.55) if velocity else VIDEO_CAMERA_EYE
+            env_cfg.viewer.lookat = (0.0, 0.0, 0.15) if velocity else VIDEO_CAMERA_LOOKAT
         env_cfg.viewer.resolution = (args_cli.video_width, args_cli.video_height)
     pre_launch_video_config(env_cfg, args_cli)
 
@@ -280,7 +288,15 @@ def main(argv: list[str] | None = None) -> None:
             if not args_cli.no_push:
                 _apply_play_pushes(command_env, args_cli.push_scale)
             states = env.state()
+            if follow is not None:
+                # asset_root viewer tracking does not move the recording camera in 3.x: follow the root by hand
+                root = command_env.robot.data.root_pos_w.torch[0].tolist()
+                eye, look = follow
+                command_env.sim.set_camera_view([root[0] + eye[0], root[1] + eye[1], eye[2]], [root[0] + look[0], root[1] + look[1], look[2]])
 
+        follow = None
+        if args_cli.video and "Velocity" in args_cli.task and args_cli.camera_follow:
+            follow = (tuple(env_cfg.viewer.eye), tuple(env_cfg.viewer.lookat))
         run_playback(step, dt=dt, args_cli=args_cli, env_cfg=env_cfg)
 
 

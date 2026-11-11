@@ -355,6 +355,11 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # run32: wider towards a faster / less damped joint (the real ankles reacted ~2x faster than the sim on the
     # first steps of the 10-24 robot walk).
     actuator_delay_jitter_ms = (-8.0, 5.0)
+    # Extra delay redrawn every control step: uniform integer 0..N control steps on top of the above (Open Duck Mini
+    # samples its action delay per step). 0 = off.
+    actuator_delay_step_jitter = 0
+    # Redraw the 0..imu_gyro_extra_delay_steps gyro delay every control step instead of once per episode.
+    imu_gyro_delay_per_step = False
     # Extra per-env lag (ms) per joint type, uniform(0, x) on top of the delay above, resampled at every reset; {} = off.
     # Ramped 0 -> 1 over actuator_delay_extra_curriculum_steps (common_step_counter + curriculum_step_offset).
     actuator_delay_extra_ms: dict = {}

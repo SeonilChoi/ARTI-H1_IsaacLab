@@ -396,7 +396,11 @@ class ArtiH1AmpEnv(DirectRLEnv):
         self.actuator_delay_extra_max_ms = per_joint(extra)[None, :]
         max_ms = (self.actuator_base_delay_ms + self.actuator_delay_extra_max_ms).max().item()
         self.actuator_delay_steps = torch.clamp(torch.round(self.actuator_base_delay_ms / 1000.0 / sim_dt), min=0).long()
-        self.actuator_buffer = torch.zeros(int(round(max_ms / 1000.0 / sim_dt)) + 2, n, len(names), device=self.device)
+        # per-control-step random extra delay 0..actuator_delay_step_jitter control steps (Open Duck), physics steps here
+        self.actuator_jitter_max = int(getattr(self.cfg, "actuator_delay_step_jitter", 0)) * self.cfg.decimation
+        self.actuator_jitter = torch.zeros(n, 1, dtype=torch.long, device=self.device)
+        self.actuator_buffer = torch.zeros(int(round(max_ms / 1000.0 / sim_dt)) + 2 + self.actuator_jitter_max, n, len(names),
+                                           device=self.device)
         self.actuator_buffer_head = 0
         lo, hi = self.cfg.actuator_armature_scale_range
         armature = per_joint(self.cfg.actuator_armature)[None, :] * torch.empty(n, 1, device=self.device).uniform_(lo, hi)
@@ -422,14 +426,17 @@ class ArtiH1AmpEnv(DirectRLEnv):
         draw = torch.rand(len(env_ids), len(types), device=self.device)[:, [types.index(nm.split("_", 1)[1]) for nm in names]]
         delay_ms = self.actuator_base_delay_ms[env_ids] + scale * draw * self.actuator_delay_extra_max_ms
         steps = torch.round(delay_ms / 1000.0 / self.cfg.sim.dt).long()
-        self.actuator_delay_steps[env_ids] = steps.clamp(0, self.actuator_buffer.shape[0] - 1)
+        self.actuator_delay_steps[env_ids] = steps.clamp(0, self.actuator_buffer.shape[0] - 1 - getattr(self, "actuator_jitter_max", 0))
 
     def _apply_actuator_model(self, target: torch.Tensor) -> torch.Tensor:
         """Called every physics step: delay the target, then shift it for Coulomb friction / freeze it when stuck."""
         steps = self.actuator_buffer.shape[0]
         self.actuator_buffer_head = (self.actuator_buffer_head + 1) % steps
         self.actuator_buffer[self.actuator_buffer_head] = target
-        index = (self.actuator_buffer_head - self.actuator_delay_steps) % steps
+        delay = self.actuator_delay_steps
+        if getattr(self, "actuator_jitter_max", 0) > 0:
+            delay = (delay + self.actuator_jitter).clamp(max=steps - 1)
+        index = (self.actuator_buffer_head - delay) % steps
         delayed = torch.gather(self.actuator_buffer.permute(1, 2, 0), 2, index.unsqueeze(-1)).squeeze(-1)
         q = self.robot.data.joint_pos.torch
         qd = self.robot.data.joint_vel.torch

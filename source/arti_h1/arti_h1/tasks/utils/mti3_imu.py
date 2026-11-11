@@ -304,6 +304,9 @@ class Mti3ImuModel:
         self.linear_acceleration_buffer[:, -1] = measured_accel_b
         self.last_linear_acceleration_b = self.linear_acceleration_buffer[:, 0]
 
+        if self.gyro_extra_delay_steps > 0 and getattr(self.cfg, "imu_gyro_delay_per_step", False):
+            # Open Duck style: a new 0..extra step draw every control step instead of once per episode
+            self.gyro_extra_delay = torch.randint(0, self.gyro_extra_delay_steps + 1, (self.num_envs,), device=self.device)
         # angular_velocity_buffer[:, -1 - k] is k steps old; the orientation is delay_steps old
         gyro_index = self.angular_velocity_buffer.shape[1] - 1 - self.delay_steps - self.gyro_extra_delay
         angular_velocity_w = self.angular_velocity_buffer[torch.arange(self.num_envs, device=self.device), gyro_index]

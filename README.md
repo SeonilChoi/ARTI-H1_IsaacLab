@@ -31,6 +31,16 @@ isaaclab train --rl_library skrl --task Template-Arti-H1-Amp-Direct-v0 physics=i
 python scripts/skrl/train.py --task Template-Arti-H1-Amp-Direct-v0 physics=isaacsim_physx
 ```
 
+### Velocity policy round r15 (server)
+
+`server/train_r15.sh [num_envs]` fine-tunes the deployed r14 velocity policy (`server/vel_r14_240000.pt`, exported to
+humanoid_controller `agent_vel_r14_240000.onnx`) for 240k steps with per-joint homing zero errors (ankle_pitch
++-0.15 rad, hip_pitch / knee +-0.08, hip_yaw +-0.03, rolls +-0.06) and commands resampled every 1.5-5 s for more
+walk / stop transitions; all other settings as r14 (81-D obs, slew limit 5.24 rad/s, target low-pass 0.6). Run it in
+tmux from the repo root with the Isaac Lab python as `$PY` (`OMNI_KIT_ACCEPT_EULA=yes`). The run lands in
+`logs/skrl/arti_h1_velocity/<date>_ppo_torch/`; export the last checkpoint with `scripts/pt_to_onnx.py --checkpoint
+<run>/checkpoints/agent_240000.pt` (it reads `<run>/params/env.yaml`, so use the run path).
+
 ### Server (Isaac Sim PhysX, tmux)
 
 Two training modes on the same environment and rewards:

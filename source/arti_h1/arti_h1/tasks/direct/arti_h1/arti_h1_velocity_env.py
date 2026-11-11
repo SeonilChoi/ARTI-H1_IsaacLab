@@ -28,7 +28,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed", "air_asymmetry", "stance_knee_flex",
+        "swing_foot_speed", "air_asymmetry", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
+        "ref_swing", "hip_yaw_straight", "knee_extension",
     )
 
     # Shared ARTI-H1 robot models (plain functions on the AMP env, they only use self.cfg / self.robot / buffers below).
@@ -48,6 +49,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
 
     def __init__(self, cfg: ArtiH1VelocityEnvCfg, render_mode: str | None = None, **kwargs):
         setattr(cfg.scene, cfg.imu_sensor_name, make_mti3_pva_cfg(cfg))
+        if cfg.obs_action_history:
+            cfg.observation_space = 3 + 3 + 12 * 3 + 12 * 3 + 3
         super().__init__(cfg, render_mode, **kwargs)
         self._init_policy_joint_order()
         names = list(self.robot.data.joint_names)
@@ -103,6 +106,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.command_timer = torch.zeros(n, device=dev)
         self.actions = torch.zeros(n, self.cfg.action_space, device=dev)
         self.previous_actions = torch.zeros_like(self.actions)
+        self.previous_actions2 = torch.zeros_like(self.actions)
+        self.q_target = self.robot.data.default_joint_pos.torch.clone()  # commanded target (policy frame, sim order)
         self.feet_air_time = torch.zeros(n, 2, device=dev)
         self.feet_contact = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self.feet_peak_height = torch.zeros(n, 2, device=dev)
@@ -112,7 +117,20 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_other_swung = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self._knee_ids = [list(self.robot.data.joint_names).index(f"{s}_knee") for s in ("left", "right")]  # feet order
         self.feet_air_ema = torch.zeros(n, 2, device=dev)  # ~1 s moving average of "foot in the air", per foot
+        self.double_support_time = torch.zeros(n, device=dev)  # time with both feet down since the last lift-off
+        # per-foot moving averages over landings, mirrored (right y negated) so a symmetric gait gives left == right:
+        # swing peak height, touchdown x / y in the heading frame relative to the root
+        self.feet_land_peak_ema = torch.full((n, 2), self.cfg.foot_target_height, device=dev)
+        self.feet_land_xy_ema = torch.zeros(n, 2, 2, device=dev)
+        self.feet_land_xy_ema[..., 1] = self.cfg.gait_symmetry_nominal_y
         self._feet_height_obs = torch.zeros(n, 2, device=dev)
+        self._mirror_y = torch.tensor([1.0, -1.0], device=dev)
+        # mirror_peak: population running mean of the swing peak at landing per cell (foot, sign vy cmd, sign wz cmd),
+        # cell = foot * 9 + (s_vy + 1) * 3 + (s_wz + 1). Shared by all envs (not reset per env).
+        self.mirror_peak_table = torch.full((18,), self.cfg.foot_target_height, device=dev)
+        self._foot_idx = torch.tensor([0, 1], device=dev)
+        self._foot_side = torch.tensor([1.0, -1.0], device=dev)
+        self._hip_yaw_ids = [names.index(f"{s}_hip_yaw") for s in ("left", "right")]
         self.episode_sums = {k: torch.zeros(n, device=dev) for k in self.REWARD_TERMS}
         self._body_mass = None
 
@@ -145,9 +163,24 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         standing_frac = self._stage_value(cfg.standing_env_stages)
         turn = (r >= standing_frac) & (r < standing_frac + cfg.turn_in_place_fraction)
         wz_max = max(abs(cfg.command_yaw_range[0]), abs(cfg.command_yaw_range[1]))
-        spin = torch.empty(k, device=dev).uniform_(0.4 * wz_max, wz_max) * torch.where(torch.rand(k, device=dev) < 0.5, -1.0, 1.0)
+        spin = torch.empty(k, device=dev).uniform_(cfg.turn_in_place_min_frac * wz_max, wz_max)
+        spin *= torch.where(torch.rand(k, device=dev) < 0.5, -1.0, 1.0)
         cmd[turn, :2] = 0.0
         cmd[turn, 2] = spin[turn]
+        # pure forward / backward bucket: the only commands that are their own mirror image, where gait_symmetry applies
+        lo_s = standing_frac + cfg.turn_in_place_fraction
+        straight = (r >= lo_s) & (r < lo_s + cfg.straight_walk_fraction)
+        vx = torch.empty(k, device=dev).uniform_(0.3, 1.0) * torch.where(torch.rand(k, device=dev) < 0.5, -1.0, 1.0)
+        vx *= max(abs(cfg.command_linear_x_range[0]), abs(cfg.command_linear_x_range[1]))
+        cmd[straight, 0] = vx[straight]
+        cmd[straight, 1:] = 0.0
+        lo_l = lo_s + cfg.straight_walk_fraction
+        side = (r >= lo_l) & (r < lo_l + cfg.lateral_walk_fraction)
+        vy = torch.empty(k, device=dev).uniform_(0.3, 1.0) * torch.where(torch.rand(k, device=dev) < 0.5, -1.0, 1.0)
+        vy *= max(abs(cfg.command_linear_y_range[0]), abs(cfg.command_linear_y_range[1]))
+        cmd[side, 0] = 0.0
+        cmd[side, 1] = vy[side]
+        cmd[side, 2] = 0.0
         cmd[r < standing_frac] = 0.0
         self.commands[env_ids] = cmd
         lo, hi = cfg.command_resample_time_s
@@ -158,15 +191,27 @@ class ArtiH1VelocityEnv(DirectRLEnv):
 
     # ------------------------------------------------------------------ step
     def _pre_physics_step(self, actions: torch.Tensor):
+        self.previous_actions2.copy_(self.previous_actions)
         self.previous_actions.copy_(self.actions)
         self.actions.copy_(actions if self._policy_order_is_identity else actions[:, self.sim_joint_ids_from_policy])
         self.command_timer -= self.step_dt
         self._sample_commands(torch.nonzero(self.command_timer <= 0.0).flatten())
-
-    def _apply_action(self):
+        # joint target once per control step: scale, real limits, then the slew limit against the previous target
         a = torch.clamp(self.actions, -1.0, 1.0)
         scale = torch.where(a >= 0.0, self.action_positive_scale, self.action_negative_scale)
         target = torch.clamp(self.robot.data.default_joint_pos.torch + scale * a, self._joint_pos_lower, self._joint_pos_upper)
+        if 0.0 < self.cfg.target_lowpass_alpha < 1.0:
+            # first-order low-pass of the joint target (real controller: policy.target_lowpass_alpha)
+            target = self.q_target + self.cfg.target_lowpass_alpha * (target - self.q_target)
+        if self.cfg.target_rate_limit > 0.0:
+            dq = self.cfg.target_rate_limit * self.step_dt
+            target = torch.clamp(target, self.q_target - dq, self.q_target + dq)
+        self.q_target.copy_(target)
+        if getattr(self, "actuator_jitter_max", 0) > 0:
+            self.actuator_jitter.random_(0, self.cfg.actuator_delay_step_jitter + 1).mul_(self.cfg.decimation)
+
+    def _apply_action(self):
+        target = self.q_target.clone()
         if hasattr(self, "joint_obs_offset"):
             # homing / encoder zero error: targets and joint obs are in the encoder frame (see ArtiH1AmpEnv._apply_action)
             target = target - self.joint_obs_offset
@@ -233,6 +278,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_air_time.copy_(torch.where(contact, torch.zeros_like(self.feet_air_time), self.feet_air_time + self.step_dt))
         self.feet_peak_height.copy_(torch.where(contact, self.feet_peak_height, torch.maximum(self.feet_peak_height, height)))
         self.feet_contact.copy_(contact)
+        both = contact.all(-1)
+        self.double_support_time.copy_(torch.where(both, self.double_support_time + self.step_dt, torch.zeros_like(self.double_support_time)))
         return height, contact, first_contact
 
     # ------------------------------------------------------------------ observations
@@ -245,11 +292,20 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         joint_pos, joint_vel = self._stale_joint_feedback()
         joint_vel = joint_vel + self.cfg.policy_joint_vel_noise_std * torch.randn_like(joint_vel)
         last_action = torch.clamp(self.actions, -1.0, 1.0)
-        policy = torch.cat(
-            (gyro_b, gravity_b, self._joints_to_policy(joint_pos - default), self._joints_to_policy(joint_vel),
-             self._joints_to_policy(last_action), self.commands),
-            dim=-1,
-        )
+        if self.cfg.obs_action_history:
+            policy = torch.cat(
+                (gyro_b, gravity_b, self._joints_to_policy(joint_pos - default), self._joints_to_policy(joint_vel),
+                 self._joints_to_policy(last_action), self._joints_to_policy(torch.clamp(self.previous_actions, -1.0, 1.0)),
+                 self._joints_to_policy(torch.clamp(self.previous_actions2, -1.0, 1.0)),
+                 self._joints_to_policy(self.q_target - default), self.commands),
+                dim=-1,
+            )
+        else:
+            policy = torch.cat(
+                (gyro_b, gravity_b, self._joints_to_policy(joint_pos - default), self._joints_to_policy(joint_vel),
+                 self._joints_to_policy(last_action), self.commands),
+                dim=-1,
+            )
         root_quat = d.body_quat_w.torch[:, self.ref_body_index]
         critic = torch.cat(
             (
@@ -308,6 +364,52 @@ class ArtiH1VelocityEnv(DirectRLEnv):
                               1.0 - 2.0 * (root_quat[:, 1] ** 2 + root_quat[:, 2] ** 2))
         dxy = feet[:, 0, :2] - feet[:, 1, :2]
         lateral = -torch.sin(heading) * dxy[:, 0] + torch.cos(heading) * dxy[:, 1]  # left minus right, heading frame
+        # gait symmetry (the legs are not mirror images, but the foot paths can be): left vs mirrored right averages of
+        # swing peak height and touchdown x / y, only for commands that are their own mirror image (pure forward /
+        # backward; lateral and turn commands legitimately move the feet differently). With the peak term active for
+        # every walking command, the policy stopped stepping for turn-in-place commands (|wz| <= 0.4) by 10k iterations:
+        # the averages start equal at reset and stay equal while no foot lands, so not turning was penalty-free.
+        rel = feet[..., :2] - d.root_pos_w.torch[:, None, :2]
+        ch, sh = torch.cos(heading)[:, None], torch.sin(heading)[:, None]
+        land_xy = torch.stack([ch * rel[..., 0] + sh * rel[..., 1], (-sh * rel[..., 0] + ch * rel[..., 1]) * self._mirror_y], -1)
+        mirror_cmd = moving * (self.commands[:, 1].abs() < cfg.gait_symmetry_max_vy).float() \
+            * (self.commands[:, 2].abs() < cfg.gait_symmetry_max_wz).float()
+        landed = first_contact & (self.feet_peak_height > cfg.foot_contact_height) & (mirror_cmd > 0).unsqueeze(-1)
+        # mirror_peak (all walking commands, unlike gait_symmetry): each landing's swing peak is compared with the
+        # population mean of the mirror cell (other foot, negated vy / wz command signs). Per landing only, so there is
+        # no frozen-average loophole; weak enough (cm-scale error * |w|) not to make stepping itself unattractive.
+        s_vy = torch.where(self.commands[:, 1] > cfg.gait_symmetry_max_vy, 1, torch.where(self.commands[:, 1] < -cfg.gait_symmetry_max_vy, -1, 0))
+        s_wz = torch.where(self.commands[:, 2] > cfg.gait_symmetry_max_wz, 1, torch.where(self.commands[:, 2] < -cfg.gait_symmetry_max_wz, -1, 0))
+        cell_own = self._foot_idx[None] * 9 + ((s_vy + 1) * 3 + (s_wz + 1))[:, None]
+        cell_mir = (1 - self._foot_idx[None]) * 9 + ((1 - s_vy) * 3 + (1 - s_wz))[:, None]
+        landed_all = first_contact & (self.feet_peak_height > cfg.foot_contact_height) & (moving > 0).unsqueeze(-1)
+        mirror_peak_cost = ((self.feet_peak_height - self.mirror_peak_table[cell_mir]).abs() * landed_all.float()).sum(-1)
+        if landed_all.any():
+            c_l, p_l = cell_own[landed_all], self.feet_peak_height[landed_all]
+            sums = torch.zeros(18, device=self.device).index_add_(0, c_l, p_l)
+            cnt = torch.zeros(18, device=self.device).index_add_(0, c_l, torch.ones_like(p_l))
+            upd = cnt > 0
+            self.mirror_peak_table[upd] += cfg.mirror_peak_alpha * (sums[upd] / cnt[upd] - self.mirror_peak_table[upd])
+        a_l = cfg.gait_symmetry_alpha
+        self.feet_land_peak_ema.copy_(torch.where(landed, self.feet_land_peak_ema + a_l * (self.feet_peak_height - self.feet_land_peak_ema),
+                                                  self.feet_land_peak_ema))
+        landed_m = (landed & (mirror_cmd > 0).unsqueeze(-1)).unsqueeze(-1)
+        self.feet_land_xy_ema.copy_(torch.where(landed_m, self.feet_land_xy_ema + a_l * (land_xy - self.feet_land_xy_ema), self.feet_land_xy_ema))
+        peak_asym = (self.feet_land_peak_ema[:, 0] - self.feet_land_peak_ema[:, 1]).abs()
+        xy_asym = (self.feet_land_xy_ema[:, 0] - self.feet_land_xy_ema[:, 1]).abs()  # (n, 2): x, y
+        # reference swing (phase-free, anchored to each foot's lift-off); land_xy is the current foot x / mirrored y
+        s_sw = (self.feet_air_time / cfg.ref_swing_time).clamp(0.0, 1.0)
+        z_ref = cfg.foot_target_height * torch.sin(math.pi * s_sw) * (self.feet_air_time <= cfg.ref_swing_time).float()
+        cos_s = torch.cos(math.pi * s_sw)
+        x_ref = -0.5 * cfg.ref_stance_time * self.commands[:, 0:1] * cos_s
+        y_ref = cfg.gait_symmetry_nominal_y - self._foot_side[None] * 0.5 * cfg.ref_stance_time * self.commands[:, 1:2] * cos_s
+        ref_err = torch.square((height - z_ref) / cfg.ref_sigma_z) + torch.square((land_xy[..., 0] - x_ref) / cfg.ref_sigma_x) \
+            + torch.square((land_xy[..., 1] - y_ref) / cfg.ref_sigma_y)
+        swing = (~contact).float()
+        ref_swing_cost = (ref_err.clamp(max=cfg.ref_cost_cap) * swing).sum(-1) * moving
+        hip_yaw_rel = q_rel[:, self._hip_yaw_ids]
+        straight = (self.commands[:, 2].abs() < cfg.hip_yaw_straight_max_wz).float()
+        hip_yaw_cost = torch.square(hip_yaw_rel / cfg.hip_yaw_straight_std).sum(-1) * straight
 
         values = {
             "track_linear_velocity": torch.exp(-lin_err / cfg.track_linear_velocity_std**2),
@@ -330,6 +432,17 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "swing_foot_speed": torch.sum(torch.square(torch.relu(swing_rel_speed - cfg.swing_foot_free_speed)), dim=-1),
             "air_asymmetry": torch.abs(self.feet_air_ema[:, 0] - self.feet_air_ema[:, 1]) * moving,
             "stance_knee_flex": torch.sum(torch.square(torch.relu(knee_flex - cfg.stance_knee_free_flex)) * contact.float(), dim=-1),
+            # gait start: both feet down for longer than a normal double-support phase while a motion is commanded
+            # lateral-only tracking, active under a lateral command (|vy cmd| > lateral_cmd_min)
+            "track_lateral_velocity": (self.commands[:, 1].abs() > cfg.lateral_cmd_min).float()
+            * torch.exp(-torch.square(self.commands[:, 1] - lin_b[:, 1]) / cfg.track_lateral_velocity_std**2),
+            "stand_still_commanded": moving * (self.double_support_time > cfg.max_double_support_s).float(),
+            "gait_symmetry": mirror_cmd * (peak_asym / cfg.gait_symmetry_peak_scale + xy_asym.sum(-1) / cfg.gait_symmetry_pos_scale),
+            "mirror_peak": mirror_peak_cost / cfg.mirror_peak_scale,
+            "ref_swing": ref_swing_cost,
+            "hip_yaw_straight": hip_yaw_cost,
+            # knee straighter than knee_extension_min (absolute rad), any phase
+            "knee_extension": torch.sum(torch.square(torch.relu(cfg.knee_extension_min - d.joint_pos.torch[:, self._knee_ids])), dim=-1),
         }
         weights = {
             "track_linear_velocity": cfg.rew_track_linear_velocity,
@@ -352,6 +465,13 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "swing_foot_speed": cfg.rew_swing_foot_speed,
             "air_asymmetry": cfg.rew_air_asymmetry,
             "stance_knee_flex": cfg.rew_stance_knee_flex,
+            "gait_symmetry": cfg.rew_gait_symmetry,
+            "stand_still_commanded": cfg.rew_stand_still_commanded,
+            "track_lateral_velocity": cfg.rew_track_lateral_velocity,
+            "mirror_peak": cfg.rew_mirror_peak,
+            "ref_swing": cfg.rew_ref_swing,
+            "hip_yaw_straight": cfg.rew_hip_yaw_straight,
+            "knee_extension": cfg.rew_knee_extension,
         }
         landings = first_contact.float()
         mean_peak_at_landing = (self.feet_peak_height * landings).sum() / landings.sum().clamp_min(1.0)
@@ -379,6 +499,20 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "Metrics/air_ratio_left": in_air[:, 0].float().mean(),
             "Metrics/air_ratio_right": in_air[:, 1].float().mean(),
             "Metrics/stance_knee_flex_mean": (knee_flex * contact).sum() / contact.sum().clamp_min(1),
+            # symmetry averages over the envs under a pure forward / backward command (the others are frozen)
+            "Metrics/peak_height_left": (self.feet_land_peak_ema[:, 0] * mirror_cmd).sum() / mirror_cmd.sum().clamp_min(1),
+            "Metrics/peak_height_right": (self.feet_land_peak_ema[:, 1] * mirror_cmd).sum() / mirror_cmd.sum().clamp_min(1),
+            "Metrics/sym_peak_asym_cm": 100.0 * (peak_asym * mirror_cmd).sum() / mirror_cmd.sum().clamp_min(1),
+            "Metrics/sym_touchdown_x_asym_cm": 100.0 * (xy_asym[:, 0] * mirror_cmd).sum() / mirror_cmd.sum().clamp_min(1),
+            "Metrics/sym_touchdown_y_asym_cm": 100.0 * (xy_asym[:, 1] * mirror_cmd).sum() / mirror_cmd.sum().clamp_min(1),
+            # largest |left - mirrored right| peak gap over the 9 command-sign cells of the population table
+            "Metrics/mirror_peak_table_max_asym_cm": 100.0 * (self.mirror_peak_table[:9] - self.mirror_peak_table[9:].flip(0)).abs().max(),
+            "Metrics/ref_swing_err_mean": (ref_err.clamp(max=cfg.ref_cost_cap) * swing * moving[:, None]).sum()
+            / (swing * moving[:, None]).sum().clamp_min(1),
+            "Metrics/hip_yaw_left_deg": torch.rad2deg((hip_yaw_rel[:, 0] * straight).sum() / straight.sum().clamp_min(1)),
+            "Metrics/hip_yaw_right_deg": torch.rad2deg((hip_yaw_rel[:, 1] * straight).sum() / straight.sum().clamp_min(1)),
+            "Metrics/stand_still_commanded_ratio": (moving * (self.double_support_time > cfg.max_double_support_s).float()).sum()
+            / moving.sum().clamp_min(1),
             "Metrics/rewarded_swing_ratio": in_window.float().sum() / in_air.float().sum().clamp_min(1),
             "Metrics/feet_lateral_distance_m": lateral.mean(),
             "Metrics/stance_sole_tilt_deg": (torch.rad2deg(torch.asin(self._sole_tilt_sq.sqrt().clamp(max=1.0))) * contact).sum()
@@ -449,18 +583,27 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             self._resample_actuator_delay(env_ids)
         self.actions[env_ids] = 0.0
         self.previous_actions[env_ids] = 0.0
+        self.previous_actions2[env_ids] = 0.0
+        self.q_target[env_ids] = self.robot.data.default_joint_pos.torch[env_ids]
         self.feet_air_time[env_ids] = 0.0
         self.feet_contact[env_ids] = True
         self.feet_peak_height[env_ids] = 0.0
         self.feet_swing_eligible[env_ids] = True
         self.feet_other_swung[env_ids] = True
         self.feet_air_ema[env_ids] = 0.0
+        self.double_support_time[env_ids] = 0.0
+        self.feet_land_peak_ema[env_ids] = self.cfg.foot_target_height
+        self.feet_land_xy_ema[env_ids, :, 0] = 0.0
+        self.feet_land_xy_ema[env_ids, :, 1] = self.cfg.gait_symmetry_nominal_y
         self._feet_height_obs[env_ids] = 0.0
         self.mti3_imu.reset(env_ids, root_state[:, 3:7], root_state[:, 10:13])
         if self.cfg.joint_obs_offset_range > 0.0 or self.cfg.joint_obs_offset_range_by_type:
             if not hasattr(self, "joint_obs_offset"):
                 self.joint_obs_offset = torch.zeros_like(self.robot.data.joint_pos.torch)
                 by_type = self.cfg.joint_obs_offset_range_by_type or {}
+                if isinstance(by_type, str):  # Hydra CLI dict override arrives as a string: "{knee:0.08,...}"
+                    import yaml
+                    by_type = yaml.safe_load(by_type.replace(":", ": ")) or {}
                 self._joint_obs_offset_range = torch.tensor(
                     [by_type.get(nm.split("_", 1)[1], self.cfg.joint_obs_offset_range) for nm in self.robot.data.joint_names],
                     device=self.device, dtype=torch.float32,
