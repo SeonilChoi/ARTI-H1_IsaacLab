@@ -253,6 +253,26 @@ def infer_activation(checkpoint_path: Path, explicit: str | None) -> str:
     print("[INFO] Defaulting activation to relu")
     return "relu"
 
+def _env_yaml_full(checkpoint_path: Path) -> dict | None:
+    """params/env.yaml as a dict (python tuple tags read as lists), or None."""
+    env_yaml = checkpoint_path.parents[1] / "params" / "env.yaml"
+    if not env_yaml.is_file():
+        return None
+    import yaml
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    _Loader.add_constructor("tag:yaml.org,2002:python/tuple", lambda l, n: l.construct_sequence(n))
+    _Loader.add_multi_constructor("tag:yaml.org,2002:python/", lambda l, s, n: None)
+    _Loader.add_multi_constructor("!", lambda l, s, n: None)
+    try:
+        return yaml.load(env_yaml.read_text(encoding="utf-8"), Loader=_Loader)
+    except Exception as e:
+        print(f"[WARN] Could not parse {env_yaml}: {e}")
+        return None
+
+
 def _env_yaml_float(checkpoint_path: Path, key: str, default: float) -> float:
     env_yaml = checkpoint_path.parents[1] / "params" / "env.yaml"
     if env_yaml.is_file():
@@ -414,6 +434,17 @@ def main() -> int:
     phase_step = step_dt * _env_yaml_float(checkpoint_path, "gait_phase_rate", 0.0) if nominal is not None else 0.0
     print(f"[INFO] Nominal table read {phase_step:.5f} phase ahead of the observed phase (step_dt {step_dt:.5f} s)")
     model = OnnxPolicy(actor, normalizer, uniform_scale, scale_min, hip_yaw_scale_min, nominal, phase_step).eval()
+    env_full = _env_yaml_full(checkpoint_path)
+    try:
+        init_pos = env_full["scene"]["robot"]["init_state"]["joint_pos"]
+    except (TypeError, KeyError):
+        init_pos = None
+    if init_pos and all(n in init_pos for n in ISAAC_JOINT_NAMES):
+        # Default pose of the run (obs / actions are relative to it); the -20/40/-20 zero runs differ from DEFAULT_JOINT_POS.
+        model.default_joint_pos.copy_(torch.tensor([float(init_pos[n]) for n in ISAAC_JOINT_NAMES]))
+        print(f"[INFO] Default joint pos from params/env.yaml: {[round(float(init_pos[n]), 5) for n in ISAAC_JOINT_NAMES]}")
+    else:
+        print("[WARN] init_state.joint_pos not in params/env.yaml; using the old -45/90/-45 zero DEFAULT_JOINT_POS")
     rest = _env_yaml_list(checkpoint_path, "gait_rest_phases")
     if rest and nominal is not None:
         model.rest_phases = rest
@@ -425,6 +456,13 @@ def main() -> int:
         # env cfg real_joint_limits: the sim joint limits (and the env target clamp) are the real motor.yaml min / max
         real = {"hip_yaw": (-0.7056, 0.7056), "hip_roll": (-0.2854, 0.4), "hip_pitch": (-0.7404, 0.5),
                 "knee": (-0.5, 1.5258), "ankle_pitch": (-0.5, 0.7453), "ankle_roll": (-1.5216, 0.5)}
+        table = (env_full or {}).get("real_joint_limit_table")
+        if table:
+            # The run's own table (new pelvis / -20-40-20 zero runs have shifted hip_pitch / knee / ankle_pitch limits).
+            real = {k: (float(v[0]), float(v[1])) for k, v in table.items()}
+            print(f"[INFO] Real joint limits from params/env.yaml: {real}")
+        else:
+            print("[WARN] real_joint_limit_table not in params/env.yaml; using the old -45/90/-45 zero table")
         for i, name in enumerate(ISAAC_JOINT_NAMES):
             model.joint_lower[i], model.joint_upper[i] = real[name.split("_", 1)[1]]
         print("[INFO] q_des clamped to the real motor.yaml joint limits")

@@ -10,7 +10,7 @@
 </link>
 
 <joint name="trunk_frame" type="fixed">
-    <origin xyz="0 0 0.28725" rpy="0 0 0" />
+    <origin xyz="0 0 0.32367" rpy="0 0 0" />
     <parent link="pelvis" />
     <child link="trunk" />
     <axis xyz="0 0 0"/>
@@ -18,7 +18,7 @@
 
 <link name="pelvis">
     <inertial>
-        <origin xyz="-0.00834 0.00005 0.33612" rpy="0 0 0" />
+        <origin xyz="-0.00834 0.00005 0.37254" rpy="0 0 0" />
         <mass value="5.62607" />
         <inertia ixx="0.03045733048" ixy="-0.00209018950" ixz="0.00005645278" iyy="0.02927966410" iyz="0.00001230651" izz="0.03821569017" />
     </inertial>
@@ -37,7 +37,7 @@
 </link>
 
 <joint name="left_hip_yaw" type="revolute">
-    <origin xyz="0 0.07 0.28065" rpy="0 0 0" />
+    <origin xyz="0 0.07 0.31707" rpy="0 0 0" />
     <parent link="pelvis" />
     <child link="left_hip_rotation" />
     <axis xyz="0 0 -1"/>
@@ -93,11 +93,11 @@
 </link>
 
 <joint name="left_hip_pitch" type="revolute">
-    <origin xyz="0.06275 0.0057 0.0" rpy="0 -0.7854 0" />
+    <origin xyz="0.06275 0.0057 0.0" rpy="0 -0.349066 0" />
     <parent link="left_hip" />
     <child link="left_thigh" />
     <axis xyz="0 -1 0"/>
-    <limit lower="-0.7853982" upper="0.7853982" effort="23.7" velocity="30"/>
+    <limit lower="-0.3490659" upper="1.2217305" effort="23.7" velocity="30"/>
 </joint>
 
 <link name="left_thigh">
@@ -121,11 +121,11 @@
 </link>
 
 <joint name="left_knee" type="revolute">
-    <origin xyz="0 -0.0114 -0.074" rpy="0 1.5708 0" />
+    <origin xyz="0 -0.0114 -0.074" rpy="0 0.698132 0" />
     <parent link="left_thigh" />
     <child link="left_shin" />
     <axis xyz="0 -1 0"/>
-    <limit lower="-0.7853982" upper="0.7853982" effort="23.7" velocity="30"/>
+    <limit lower="-1.6580628" upper="0.6981317" effort="23.7" velocity="30"/>
 </joint>
 
 <link name="left_shin">
@@ -149,11 +149,11 @@
 </link>
 
 <joint name="left_ankle_pitch" type="revolute">
-    <origin xyz="0 0.0024 -0.074" rpy="0 -0.7854 0" />
+    <origin xyz="0 0.0024 -0.074" rpy="0 -0.349066 0" />
     <parent link="left_shin" />
     <child link="left_foot_rotation" />
     <axis xyz="0 1 0"/>
-    <limit lower="-0.7853982" upper="0.7853982" effort="24.0" velocity="5"/>
+    <limit lower="-1.2217305" upper="0.3490659" effort="24.0" velocity="5"/>
 </joint>
 
 <link name="left_foot_rotation">
@@ -220,7 +220,7 @@
 </link>
 
 <joint name="right_hip_yaw" type="revolute">
-    <origin xyz="0 -0.07 0.28065" rpy="0 0 3.141592" />
+    <origin xyz="0 -0.07 0.31707" rpy="0 0 3.141592" />
     <parent link="pelvis" />
     <child link="right_hip_rotation" />
     <axis xyz="0 0 -1"/>
@@ -276,11 +276,11 @@
 </link>
 
 <joint name="right_hip_pitch" type="revolute">
-    <origin xyz="0.06275 0.0057 0.0" rpy="0 -0.7854 0" />
+    <origin xyz="0.06275 0.0057 0.0" rpy="0 -0.349066 0" />
     <parent link="right_hip" />
     <child link="right_thigh" />
     <axis xyz="0 -1 0"/>
-    <limit lower="-0.7853982" upper="0.7853982" effort="23.7" velocity="30"/>
+    <limit lower="-0.3490659" upper="1.2217305" effort="23.7" velocity="30"/>
 </joint>
 
 <link name="right_thigh">
@@ -304,11 +304,11 @@
 </link>
 
 <joint name="right_knee" type="revolute">
-    <origin xyz="0 -0.0114 -0.074" rpy="0 1.5708 0" />
+    <origin xyz="0 -0.0114 -0.074" rpy="0 0.698132 0" />
     <parent link="right_thigh" />
     <child link="right_shin" />
     <axis xyz="0 -1 0"/>
-    <limit lower="-0.7853982" upper="0.7853982" effort="23.7" velocity="30"/>
+    <limit lower="-1.6580628" upper="0.6981317" effort="23.7" velocity="30"/>
 </joint>
 
 <link name="right_shin">
@@ -332,11 +332,11 @@
 </link>
 
 <joint name="right_ankle_pitch" type="revolute">
-    <origin xyz="0 0.0024 -0.074" rpy="0 -0.7854 0" />
+    <origin xyz="0 0.0024 -0.074" rpy="0 -0.349066 0" />
     <parent link="right_shin" />
     <child link="right_foot_rotation" />
     <axis xyz="0 1 0"/>
-    <limit lower="-0.7853982" upper="0.7853982" effort="24.0" velocity="5"/>
+    <limit lower="-1.2217305" upper="0.3490659" effort="24.0" velocity="5"/>
 </joint>
 
 <link name="right_foot_rotation">

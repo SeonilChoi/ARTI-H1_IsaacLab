@@ -143,7 +143,7 @@ ARTI_H1_JOINT_VELOCITY_LIMIT = {
     "right_ankle_roll": 5.0,
 }
 # trunk_frame in arti_h1.urdf. The reference walk_com_height (0.29725) is this plus the 0.01 m pelvis origin height.
-ARTI_H1_TRUNK_OFFSET_FROM_PELVIS = (0.0, 0.0, 0.28725)
+ARTI_H1_TRUNK_OFFSET_FROM_PELVIS = (0.0, 0.0, 0.32367)  # new pelvis 11-12 (was 0.28725)
 # MTi-3 mount relative to the trunk. Mirrored in x compared to Koala (-0.04688, 0.0, 0.023).
 ARTI_H1_IMU_OFFSET_FROM_TRUNK = (0.04688, 0.0, 0.023)
 ARTI_H1_IMU_OFFSET_FROM_PELVIS = (
@@ -334,8 +334,8 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     # run35: hard sim joint limits = the real motor.yaml min / max after homing (rad, both sides); False = URDF +-45 deg.
     real_joint_limits = True
     real_joint_limit_table = {
-        "hip_yaw": (-0.7056, 0.7056), "hip_roll": (-0.2854, 0.4), "hip_pitch": (-0.7404, 0.5),
-        "knee": (-0.5, 1.5258), "ankle_pitch": (-0.5, 0.7453), "ankle_roll": (-1.5216, 0.5),
+        "hip_yaw": (-0.7056, 0.7056), "hip_roll": (-0.2854, 0.4), "hip_pitch": (-0.3041, 0.9363),
+        "knee": (-1.3727, 0.6531), "ankle_pitch": (-0.9363, 0.3090), "ankle_roll": (-1.5216, 0.5),
     }
     # Measured joint model (humanoid_controller example_sysid + scripts/tuning/sysid_sim.py fit, see JOURNAL 10-23),
     # applied every physics step in ArtiH1AmpEnv._apply_actuator_model. Per joint type (hip_yaw, hip_roll, hip_pitch,
@@ -628,8 +628,9 @@ class ArtiH1AmpEnvCfg(DirectRLEnvCfg):
     imu_backend = "isaaclab"
     imu_body = "pelvis"
     imu_sensor_name = "mti3_imu"
-    imu_prim_path = "/World/envs/env_.*/Robot/pelvis"
-    imu_parent_path_template = "/World/envs/env_{env_id}/Robot/{body}"
+    # 11-12: the Isaac Sim 6.2 URDF import puts the links under Robot/Geometry (5.1 import: Robot/<link>).
+    imu_prim_path = "/World/envs/env_.*/Robot/Geometry/pelvis"
+    imu_parent_path_template = "/World/envs/env_{env_id}/Robot/Geometry/{body}"
     imu_sensor_period_s = 0.0
     imu_linear_acceleration_filter_size = 1
     imu_angular_velocity_filter_size = 1

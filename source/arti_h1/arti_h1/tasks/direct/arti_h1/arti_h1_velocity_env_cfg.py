@@ -140,6 +140,12 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     rew_track_lateral_velocity = 0.0
     track_lateral_velocity_std = 0.03
     lateral_cmd_min = 0.02
+    # Yaw-only tracking (RSI r16). r15 (joint zero-error randomisation) reached only 17-30 % of a +0.1 rad/s turn
+    # (start_ok 0.22-0.31) while -0.1 tracked 98 %: the fine term (std 0.1) still pays 0.37 for standing under 0.1.
+    # Gated on |wz cmd| > yaw_cmd_min, std 0.04 (standing under 0.1 -> 0.002). Off by default.
+    rew_track_yaw_velocity = 0.0
+    track_yaw_velocity_std = 0.04
+    yaw_cmd_min = 0.03
     rew_upright = 2.0
     upright_std = math.sqrt(0.05)
     rew_pose = 1.0
@@ -214,7 +220,7 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # this caps swing FLEXION (foot lift), not hyperextension. The 11-11 real r12 walk swung the knee to -0.4 rad
     # (sim the same); a cap here trades foot clearance for a smaller gait. 0 = off.
     rew_knee_extension = 0.0
-    knee_extension_min = 0.0
+    knee_extension_min = -0.87266  # old-zero 0.0
     # Reference swing imitation (Open Duck Mini / Disney BDX style, but phase-free for the policy: the reference is
     # anchored to each foot's own lift-off, s = air_time / ref_swing_time). Swing-foot cost per step, capped:
     # (z - h sin(pi s))^2 / sz^2 + (x - x_ref)^2 / sx^2 + (y - y_ref)^2 / sy^2 in the heading frame relative to the
@@ -228,6 +234,10 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     ref_sigma_x = 0.03
     ref_sigma_y = 0.02
     ref_cost_cap = 10.0
+    # RSI r17: the plain reference lands the trailing foot Ay (1.6 cm at 0.08 m/s) inside the nominal 6.5 cm, i.e. soles
+    # ~10 cm apart while feet_too_close penalises < foot_min_width (0.12): r12-r16 reached only 0.015-0.02 m/s of a
+    # 0.08 m/s sideways command. True: both feet's lateral reference is shifted out by |Ay|.
+    ref_lateral_widen = False
     # Straight hips: sum over hip_yaw of (q - default)^2 / std^2 while no turn is commanded (|wz cmd| < max_wz).
     # r05 walked with hip_yaw L +3.8 / R -6.7 deg off default for straight commands (feet toed differently).
     rew_hip_yaw_straight = 0.0

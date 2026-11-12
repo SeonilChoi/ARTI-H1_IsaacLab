@@ -29,7 +29,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
         "swing_foot_speed", "air_asymmetry", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
-        "ref_swing", "hip_yaw_straight", "knee_extension",
+        "ref_swing", "hip_yaw_straight", "knee_extension", "track_yaw_velocity",
     )
 
     # Shared ARTI-H1 robot models (plain functions on the AMP env, they only use self.cfg / self.robot / buffers below).
@@ -402,7 +402,11 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         z_ref = cfg.foot_target_height * torch.sin(math.pi * s_sw) * (self.feet_air_time <= cfg.ref_swing_time).float()
         cos_s = torch.cos(math.pi * s_sw)
         x_ref = -0.5 * cfg.ref_stance_time * self.commands[:, 0:1] * cos_s
-        y_ref = cfg.gait_symmetry_nominal_y - self._foot_side[None] * 0.5 * cfg.ref_stance_time * self.commands[:, 1:2] * cos_s
+        ay = 0.5 * cfg.ref_stance_time * self.commands[:, 1:2]
+        # ref_lateral_widen: shift both feet out by |Ay| under a lateral command so the trailing (inner) foot lands at the
+        # nominal width instead of Ay inside it (which put the two soles ~10 cm apart, under foot_min_width 0.12)
+        y_nom = cfg.gait_symmetry_nominal_y + (ay.abs() if cfg.ref_lateral_widen else 0.0)
+        y_ref = y_nom - self._foot_side[None] * ay * cos_s
         ref_err = torch.square((height - z_ref) / cfg.ref_sigma_z) + torch.square((land_xy[..., 0] - x_ref) / cfg.ref_sigma_x) \
             + torch.square((land_xy[..., 1] - y_ref) / cfg.ref_sigma_y)
         swing = (~contact).float()
@@ -436,6 +440,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             # lateral-only tracking, active under a lateral command (|vy cmd| > lateral_cmd_min)
             "track_lateral_velocity": (self.commands[:, 1].abs() > cfg.lateral_cmd_min).float()
             * torch.exp(-torch.square(self.commands[:, 1] - lin_b[:, 1]) / cfg.track_lateral_velocity_std**2),
+            # yaw-only tracking, active under a turn command (|wz cmd| > yaw_cmd_min)
+            "track_yaw_velocity": (self.commands[:, 2].abs() > cfg.yaw_cmd_min).float()
+            * torch.exp(-fine_yaw_err / cfg.track_yaw_velocity_std**2),
             "stand_still_commanded": moving * (self.double_support_time > cfg.max_double_support_s).float(),
             "gait_symmetry": mirror_cmd * (peak_asym / cfg.gait_symmetry_peak_scale + xy_asym.sum(-1) / cfg.gait_symmetry_pos_scale),
             "mirror_peak": mirror_peak_cost / cfg.mirror_peak_scale,
@@ -472,6 +479,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "ref_swing": cfg.rew_ref_swing,
             "hip_yaw_straight": cfg.rew_hip_yaw_straight,
             "knee_extension": cfg.rew_knee_extension,
+            "track_yaw_velocity": cfg.rew_track_yaw_velocity,
         }
         landings = first_contact.float()
         mean_peak_at_landing = (self.feet_peak_height * landings).sum() / landings.sum().clamp_min(1.0)

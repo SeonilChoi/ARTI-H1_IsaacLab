@@ -78,20 +78,21 @@ def spawn_arti_h1_usd(prim_path, cfg, translation=None, orientation=None, **kwar
     return spawn_from_usd(prim_path, cfg, translation, orientation, **kwargs)
 
 
-# Standing pose = first frame of every reference clip. The right leg chain is the left one rotated
+# Standing pose (11-12, user): q = 0 on hip_pitch / knee / ankle_pitch = the -20/40/-20 deg URDF zero (was the
+# old crouched stance hip -39 / knee 78 / ankle -39 deg = q 0.33555 / -0.67109 / -0.33555). The right leg chain is the left one rotated
 # by pi about z in the URDF (right_hip_yaw rpy 0 0 pi), so both legs use the same joint signs.
 JOINT_INIT_POS = {
     "left_hip_yaw": 0.0,
     "left_hip_roll": -0.00001,
-    "left_hip_pitch": -0.10078,
-    "left_knee": 0.20157,
-    "left_ankle_pitch": 0.10078,
+    "left_hip_pitch": 0.0,
+    "left_knee": 0.0,
+    "left_ankle_pitch": 0.0,
     "left_ankle_roll": -0.00001,
     "right_hip_yaw": 0.0,
     "right_hip_roll": 0.00001,
-    "right_hip_pitch": -0.10078,
-    "right_knee": 0.20157,
-    "right_ankle_pitch": 0.10079,
+    "right_hip_pitch": 0.0,
+    "right_knee": 0.0,
+    "right_ankle_pitch": 0.0,
     "right_ankle_roll": 0.00001,
 }
 
@@ -160,7 +161,9 @@ ARTI_H1_CFG = ArticulationCfg(
     prim_path="{ENV_REGEX_NS}/Robot",
     spawn=sim_utils.UsdFileCfg(
         func=spawn_arti_h1_usd,
-        usd_path=f"{ISAACLAB_ASSETS_DIR}/models/arti_h1/arti_h1/arti_h1.usd",
+        # 11-12: fresh Isaac Sim 6.2 URDF import of the new-pelvis -20/40/-20 arti_h1.urdf (scripts/tools/convert_urdf.py).
+        # The previous in-place patched asset is models/arti_h1/arti_h1/arti_h1.usd (same masses / limits / frames).
+        usd_path=f"{ISAACLAB_ASSETS_DIR}/models/arti_h1/arti_h1_new/arti_h1.usd/arti_h1/arti_h1.usda",
         # Isaac Lab 3.x schema fragments: the PhysX values are the 2.x RigidBody/Collision/ArticulationRootPropertiesCfg
         # values unchanged; the Newton fragment only mirrors enabled_self_collisions=False.
         rigid_props=PhysxRigidBodyCfg(
@@ -190,7 +193,7 @@ ARTI_H1_CFG = ArticulationCfg(
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         # Reference pelvis origin height with the soles on the ground (root z of every clip).
-        pos=(0.0, 0.0, 0.01),
+        pos=(0.0, 0.0, -0.0020),  # q=0 (-20/40/-20) stance, new pelvis: soles 0.20 cm above the pelvis origin (FK)
         joint_pos=JOINT_INIT_POS,
     ),
     actuators={
