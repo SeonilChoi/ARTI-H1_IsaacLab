@@ -320,3 +320,28 @@ class ArtiH1VelocityEnvCfg_PLAY(ArtiH1VelocityEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.scene.num_envs = 16
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Knee-bent (KB) line (11-13, user): r21's crouched stance on the patched USD, kept separate from the straight-leg
+# q=0 line. Training / eval / real2sim for this line use Template-Arti-H1-Velocity-KB(-Play)-Direct-v0 and logs/rsi_kb.
+@configclass
+class ArtiH1VelocityKBEnvCfg(ArtiH1VelocityEnvCfg):
+    # the patched (5.1-import) USD keeps the links at Robot/<link>
+    imu_prim_path = "/World/envs/env_.*/Robot/pelvis"
+    imu_parent_path_template = "/World/envs/env_{env_id}/Robot/{body}"
+
+    def __post_init__(self):
+        super().__post_init__()
+        from arti_h1.robots import ARTI_H1_KB_CFG
+
+        self.scene.robot = self.scene.robot.replace(spawn=ARTI_H1_KB_CFG.spawn, init_state=ARTI_H1_KB_CFG.init_state)
+
+
+@configclass
+class ArtiH1VelocityKBEnvCfg_PLAY(ArtiH1VelocityKBEnvCfg):
+    curriculum_step_offset = 10_000 * NUM_STEPS_PER_ENV
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 16

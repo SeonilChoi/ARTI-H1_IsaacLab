@@ -208,3 +208,26 @@ ARTI_H1_CFG = ArticulationCfg(
         ),
     },
 )
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Knee-bent (KB) line, kept separate from the straight-leg q=0 line above (11-13, user). Same new pelvis and the same
+# -20/40/-20 joint zero, but the old crouched stance (hip -39 / knee 78 / ankle -39 deg) and the in-place patched USD
+# that r21 (deployed on humanoid_controller arti-h1-new-pelvis) was trained on (links at Robot/<link>).
+JOINT_INIT_POS_KB = {
+    **JOINT_INIT_POS,
+    "left_hip_pitch": 0.33555,
+    "left_knee": -0.67109,
+    "left_ankle_pitch": -0.33555,
+    "right_hip_pitch": 0.33555,
+    "right_knee": -0.67109,
+    "right_ankle_pitch": -0.33554,
+}
+
+ARTI_H1_KB_CFG = ARTI_H1_CFG.replace(
+    spawn=ARTI_H1_CFG.spawn.replace(usd_path=f"{ISAACLAB_ASSETS_DIR}/models/arti_h1/arti_h1/arti_h1.usd"),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, -0.02642),  # crouched stance, new pelvis (r21)
+        joint_pos=JOINT_INIT_POS_KB,
+    ),
+)

@@ -173,6 +173,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no_push", action="store_true", default=False, help="Disable the scheduled play pushes.")
     parser.add_argument("--camera_follow", action="store_true", default=False, help="Move the video camera with the robot.")
     parser.add_argument("--camera", choices=("side", "front"), default="side", help="Video camera: side or front (velocity task).")
+    parser.add_argument("--zero_action", action="store_true", default=False, help="Send zero actions (PD hold of the default pose) with a zero command; shows the standing pose.")
     parser.add_argument("--push_scale", type=float, default=1.0, help="Scale of the scheduled play pushes.")
     cli_args_skrl.add_skrl_args(parser)
     add_launcher_args(parser)
@@ -283,6 +284,8 @@ def main(argv: list[str] | None = None) -> None:
             nonlocal obs, states
             outputs = runner.agent.act(obs, states, timestep=0, timesteps=0)
             actions = outputs[-1].get("mean_actions", outputs[0])
+            if args_cli.zero_action:
+                actions = torch.zeros_like(actions)
             obs, _, _, _, _ = env.step(actions)
             obs = _apply_play_command_sequence(command_env, obs)
             if not args_cli.no_push:

@@ -383,7 +383,15 @@ class ArtiH1AmpEnv(DirectRLEnv):
     def _init_actuator_model(self):
         """Per-env measured joint model: delay buffer, armature, Coulomb friction with stiction (cfg.actuator_*)."""
         names = self.robot.data.joint_names
+        for attr in ("actuator_delay_ms", "actuator_armature", "actuator_coulomb", "actuator_delay_extra_ms"):
+            value = getattr(self.cfg, attr, None)
+            if isinstance(value, str):  # Hydra CLI dict override arrives as a string: "{knee:7.0,...}"
+                import yaml
+                setattr(self.cfg, attr, yaml.safe_load(value.replace(":", ": ")) or {})
         def per_joint(values):
+            if isinstance(values, str):  # Hydra CLI dict override arrives as a string: "{knee:7.0,...}"
+                import yaml
+                values = yaml.safe_load(values.replace(":", ": ")) or {}
             return torch.tensor([values[n.split("_", 1)[1]] for n in names], device=self.device, dtype=torch.float32)
         n = self.num_envs
         sim_dt = self.cfg.sim.dt

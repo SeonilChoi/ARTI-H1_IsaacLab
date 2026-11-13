@@ -102,3 +102,18 @@ gym.register(
         "env_cfg_entry_point": f"{__name__}.arti_h1_velocity_env_cfg:ArtiH1VelocityEnvCfg_PLAY",
     },
 )
+
+# Knee-bent line (crouched r21 stance, patched USD), separate from the straight-leg q=0 line above.
+gym.register(
+    id="Template-Arti-H1-Velocity-KB-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_velocity_env:ArtiH1VelocityEnv",
+    disable_env_checker=True,
+    kwargs={**_ARTI_H1_VELOCITY_KWARGS, "env_cfg_entry_point": f"{__name__}.arti_h1_velocity_env_cfg:ArtiH1VelocityKBEnvCfg"},
+)
+
+gym.register(
+    id="Template-Arti-H1-Velocity-KB-Play-Direct-v0",
+    entry_point=f"{__name__}.arti_h1_velocity_env:ArtiH1VelocityEnv",
+    disable_env_checker=True,
+    kwargs={**_ARTI_H1_VELOCITY_KWARGS, "env_cfg_entry_point": f"{__name__}.arti_h1_velocity_env_cfg:ArtiH1VelocityKBEnvCfg_PLAY"},
+)

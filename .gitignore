@@ -82,3 +82,6 @@ logs/porting/
 
 # Isaac Sim WebRTC livestream telemetry (written to the cwd by --livestream)
 NvStreamer-*.etli
+
+# server round tarballs (scp only)
+server/results/*.tar.gz
