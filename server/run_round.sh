@@ -33,6 +33,9 @@ for a in "$@"; do
 done
 PY=${PY:-python}; export PY
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
+# import arti_h1 from THIS checkout: the pip editable install points at the folder it was installed from, so a second
+# worktree (git worktree add ../arti_h1_light server-light) would otherwise train the main folder's code
+export PYTHONPATH="$ROOT/source/arti_h1${PYTHONPATH:+:$PYTHONPATH}"
 OUT=server/results/$TAG; mkdir -p "$OUT"
 START=$(date '+%F %T')
 

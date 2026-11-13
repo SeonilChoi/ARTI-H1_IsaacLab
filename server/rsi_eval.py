@@ -15,7 +15,13 @@ cfg.scene.num_envs = a.num_envs; cfg.events.push_robot = None
 import yaml
 for kv in extra:  # training-round env overrides "env.name=value" (flat attributes only), e.g. obs_action_history
     k, v = kv.split("=", 1)
-    if k.startswith("env.") and "." not in k[4:]: setattr(cfg, k[4:], yaml.safe_load(v.replace(":", ": ") if v.startswith("{") else v)); print("override", k[4:], v)
+    if not k.startswith("env."): continue
+    val = yaml.safe_load(v.replace(":", ": ") if v.startswith("{") else v); val = tuple(val) if isinstance(val, list) else val
+    obj, parts = cfg, k[4:].split(".")
+    try:
+        for p_ in parts[:-1]: obj = obj[p_] if isinstance(obj, dict) else getattr(obj, p_)
+        obj.__setitem__(parts[-1], val) if isinstance(obj, dict) else setattr(obj, parts[-1], val); print("override", k[4:], v)
+    except (AttributeError, KeyError, TypeError) as e: print("override skipped", k[4:], e)
 env = gym.make(T, cfg=cfg); u = env.unwrapped; dev = u.device; N = u.num_envs
 c = torch.load(a.ckpt, map_location=dev, weights_only=False)
 P = c["policy"]; pre = c["observation_preprocessor"]
