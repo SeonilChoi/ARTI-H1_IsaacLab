@@ -93,7 +93,12 @@ echo "[$TAG] packed: server/results/$TAG.tar.gz ($(du -h "server/results/$TAG.ta
 
 if [ "$PUSH" = 1 ]; then
   git lfs install --local >/dev/null 2>&1
-  git add -f "$OUT/summary.txt" "$OUT/train.log" "$OUT"/eval.json "$OUT"/eval_summary.txt "$OUT"/eval.log "$OUT"/params "$OUT"/events.out.tfevents.* "$OUT/final.pt" "$OUT"/*.mp4 2>/dev/null
-  git commit -m "server results: $TAG ($(head -1 "$OUT/summary.txt"))" && git push origin HEAD \
+  # add only the files that exist: one missing pathspec (e.g. no eval_summary.txt / mp4) makes git add stage nothing
+  for f in "$OUT/summary.txt" "$OUT/train.log" "$OUT"/eval.json "$OUT"/eval_summary.txt "$OUT"/eval.log "$OUT"/params \
+           "$OUT"/events.out.tfevents.* "$OUT/final.pt" "$OUT"/*.mp4 "$OUT"/video.log; do
+    [ -e "$f" ] && git add -f "$f"
+  done
+  git commit -m "server results: $TAG ($(head -1 "$OUT/summary.txt"))" \
+    && { git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || true; } && git push origin HEAD \
     && echo "[$TAG] pushed to $(git rev-parse --abbrev-ref HEAD)" || echo "[$TAG] push failed - send the tarball with scp instead"
 fi
