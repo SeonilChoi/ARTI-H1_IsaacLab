@@ -1,0 +1,11 @@
+status: OK
+tag: nr04d
+script: server/train_nr04d.sh
+num_envs: 4096
+run: logs/skrl/arti_h1_velocity/2026-11-13_16-44-46_ppo_torch
+checkpoint: logs/skrl/arti_h1_velocity/2026-11-13_16-44-46_ppo_torch/checkpoints/agent_120000.pt
+commit: a5cdf05 (server)
+host: ip-10-126-198-57
+start: 2026-11-13 16:44:42
+end: 2026-11-13 19:33:44
+last progress: 100%|██████████| 120000/120000 [2:39:42<00:00, 12.52it/s]
