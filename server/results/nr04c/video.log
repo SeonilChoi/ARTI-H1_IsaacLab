@@ -1,0 +1,111 @@
+Warp 1.17.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.2
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA L40S" (44 GiB, sm_89, mempool enabled)
+   Kernel cache:
+     /home/iicuser/.cache/warp/1.17.0
+[INFO]: Running headless because '--viz kit' was not requested. Pass it to open a viewport.
+[INFO]: Using device: cuda:0
+[INFO]: Loading experience file: /opt/isaac/IsaacLab-main/apps/isaaclab.python.headless.kit
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1794587852.857190   79901 descriptor_database.cc:633] File already exists in database: grpc/health/v1/health.proto
+W0000 00:00:1794587852.857238   79901 message.cc:301] Protobuf GeneratedMessageFactory: File is already registered: grpc/health/v1/health.proto
+Warning: Possible version incompatibility. Attempting to load carb::ujitso::IFactory with version v0.3 against v0.2.
+[ISAACLAB] KitLauncher initialization complete
+[INFO] Loading experiment from directory: /opt/isaac/projects/arti_h1/logs/skrl/arti_h1_velocity
+[INFO]: Video recording enabled.
+        source: viz:newton_gl
+        output_dir: /opt/isaac/projects/arti_h1/server/results/videos/play
+        video_length: 2400
+        video_interval: 2000
+[INFO]: Base environment:
+	Environment device    : cuda:0
+	Environment seed      : 42
+	Physics step-size     : 0.004166666666666667
+	Rendering step-size   : 0.016666666666666666
+	Environment step-size : 0.016666666666666666
+[INFO]: Loading local copy of remote asset 'https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Environments/Grid/default_ground_plane_checker_v1/default_ground_plane.usda' from '/tmp/https/omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Environments/Grid/default_ground_plane_checker_v1/default_ground_plane.usda'.
+[INFO]: Loading local copy of remote asset 'https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Environments/Grid/default_ground_plane_checker_v1/Materials/Textures/default_ground_plane_albedo.png' from '/tmp/https/omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Environments/Grid/default_ground_plane_checker_v1/Materials/Textures/default_ground_plane_albedo.png'.
+[INFO]: Loading local copy of remote asset 'https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Environments/Grid/default_ground_plane_checker_v1/Materials/Textures/default_ground_plane_roughness.png' from '/tmp/https/omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.2/Isaac/IsaacLab/Environments/Grid/default_ground_plane_checker_v1/Materials/Textures/default_ground_plane_roughness.png'.
+[INFO]: Registered backend 'physx' for factory Articulation.
+[INFO]: Registered backend 'physx' for factory Pva.
+/opt/isaac/IsaacLab-main/source/isaaclab_newton/isaaclab_newton/cloner/newton_clone_utils.py:139: FutureWarning: Newton shape color replacement is enabled; this workaround will be deprecated in a future release.
+  replace_newton_builder_shape_colors(builder, stage)
+[INFO]: Physics scene prim path: /physicsScene
+[INFO]: Time taken for scene creation Last: 7.476195 s, Mean: 7.476195 s, Std: 0.000000 s, N: 1
+[INFO]: Scene manager: <class InteractiveScene>
+	Number of environments: 1
+	Environment spacing   : 1.0
+	Source prim name      : /World/envs/env_0
+	Global prim paths     : ['/World/ground']
+[INFO]: Starting the simulation. This may take a few seconds. Please wait...
+[INFO]: Simulation parameters for joints in /World/envs/env_.*/Robot:
++------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|                                                   Simulation Joint Information (Prim path: /World/envs/env_.*/Robot)                                                   |
++-------+-------------------+-----------+---------+----------+-----------------+------------------+------------------+-----------------+-----------------+---------------+
+| Index | Name              | Stiffness | Damping | Armature | Static Friction | Dynamic Friction | Viscous Friction | Position Limits | Velocity Limits | Effort Limits |
++-------+-------------------+-----------+---------+----------+-----------------+------------------+------------------+-----------------+-----------------+---------------+
+|   0   | left_hip_yaw      |   80.140  |  1.152  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.785, 0.785] |      30.000     |     23.700    |
+|   1   | right_hip_yaw     |   80.140  |  1.152  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.785, 0.785] |      30.000     |     23.700    |
+|   2   | left_hip_roll     |   72.130  |  1.302  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.785, 0.785] |      30.000     |     23.700    |
+|   3   | right_hip_roll    |   72.130  |  1.302  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.785, 0.785] |      30.000     |     23.700    |
+|   4   | left_hip_pitch    |   72.130  |  1.002  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.349, 1.222] |      30.000     |     23.700    |
+|   5   | right_hip_pitch   |   72.130  |  1.002  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.349, 1.222] |      30.000     |     23.700    |
+|   6   | left_knee         |  100.170  |  1.302  |  0.000   |      0.000      |      0.000       |      0.000       | [-1.658, 0.698] |      30.000     |     23.700    |
+|   7   | right_knee        |  100.170  |  1.302  |  0.000   |      0.000      |      0.000       |      0.000       | [-1.658, 0.698] |      30.000     |     23.700    |
+|   8   | left_ankle_pitch  |   30.000  |  0.300  |  0.000   |      0.000      |      0.000       |      0.000       | [-1.222, 0.349] |      5.000      |     24.000    |
+|   9   | right_ankle_pitch |   30.000  |  0.300  |  0.000   |      0.000      |      0.000       |      0.000       | [-1.222, 0.349] |      5.000      |     24.000    |
+|   10  | left_ankle_roll   |   27.000  |  0.400  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.785, 0.785] |      5.000      |     24.000    |
+|   11  | right_ankle_roll  |   27.000  |  0.400  |  0.000   |      0.000      |      0.000       |      0.000       | [-0.785, 0.785] |      5.000      |     24.000    |
++-------+-------------------+-----------+---------+----------+-----------------+------------------+------------------+-----------------+-----------------+---------------+
+/opt/isaac/IsaacLab-main/source/isaaclab_newton/isaaclab_newton/physics/newton_backend.py:69: NewtonWarning: Inertia validation corrected 3 bodies. Set validate_inertia_detailed=True for detailed per-body warnings.
+  self.model = builder.finalize(device=cfg.device)
+[INFO]: [NewtonVisualizer] Object dragging is disabled because the active physics solver does not support rigid-body force input.
+[INFO]: Time taken for simulation start Last: 3.706986 s, Mean: 3.706986 s, Std: 0.000000 s, N: 1
+[INFO]: Event Manager: <EventManager> contains 1 active terms.
++---------------------------------------+
+| Active Event Terms in Mode: 'startup' |
++----------+----------------------------+
+|  Index   | Name                       |
++----------+----------------------------+
+|    0     | physics_material           |
+|    1     | add_pelvis_mass            |
+|    2     | pelvis_com                 |
+|    3     | actuator_gains             |
++----------+----------------------------+
+
+[INFO]: Completed setting up the environment...
+[INFO] actuator model: delay 9.7 ms mean, armature {'hip_yaw': 0.005, 'hip_roll': 0.005, 'hip_pitch': 0.0, 'knee': 0.01, 'ankle_pitch': 0.02, 'ankle_roll': 0.02}, coulomb {'hip_yaw': 0.2, 'hip_roll': 0.15, 'hip_pitch': 0.1, 'knee': 0.1, 'ankle_pitch': 0.3, 'ankle_roll': 0.2}
+[38;20m[skrl:INFO] Environment wrapper: Isaac Lab (single-agent)[0m
+[38;20m[skrl:INFO] Seed: 42[0m
+[INFO] Play command sequence:
+  1. forward: (0.15, 0.0, 0.0)
+  2. stand: (0.0, 0.0, 0.0)
+  3. side_left: (0.0, 0.08, 0.0)
+  4. backward: (-0.15, 0.0, 0.0)
+  5. stand: (0.0, 0.0, 0.0)
+  6. diagonal_right: (0.1, -0.06, 0.0)
+  7. turn_left: (0.0, 0.0, 0.4)
+  8. stand: (0.0, 0.0, 0.0)
+[INFO] Loading model checkpoint from: /opt/isaac/projects/arti_h1/server/results/nr04c/final.pt
+[INFO] Current command: forward (x=0.1500, y=0.0000, yaw=0.0000)
+[INFO]: Policy playback is running, press Ctrl+C to exit...
+[INFO] Current command: stand (x=0.0000, y=0.0000, yaw=0.0000)
+[INFO] Current command: side_left (x=0.0000, y=0.0800, yaw=0.0000)
+[INFO] Current command: backward (x=-0.1500, y=0.0000, yaw=0.0000)
+[INFO] Current command: stand (x=0.0000, y=0.0000, yaw=0.0000)
+[INFO] Current command: diagonal_right (x=0.1000, y=-0.0600, yaw=0.0000)
+[INFO] Current command: turn_left (x=0.0000, y=0.0000, yaw=0.4000)
+[INFO]: [VideoRecorder] Wrote 2000 frames to /opt/isaac/projects/arti_h1/server/results/videos/play/clip_0004.mp4
+[INFO] Current command: stand (x=0.0000, y=0.0000, yaw=0.0000)
+[INFO] Current command: forward (x=0.1500, y=0.0000, yaw=0.0000)
+[INFO]: [VideoRecorder] Wrote 400 frames to /opt/isaac/projects/arti_h1/server/results/videos/play/clip_0005.mp4
+[INFO]: SimulationContext cleared
+Loading user config located at: '/opt/isaac/IsaacLab-main/.venv/lib/python3.12/site-packages/isaacsim/kit/data/Kit/IsaacLab/3.0/user.config.json'
+2026-11-13T16:37:33Z [0ms] [Warning] [omni.platforminfo.plugin] failed to open the default display.  Can't verify X Server version.
+2026-11-13T16:37:33Z [7ms] [Warning] [omni.usd_config.extension] Enable omni.materialx.libs extension to use MaterialX
+2026-11-13T16:37:39Z [6,523ms] [Warning] [isaaclab.utils.assets] Serving remote assets from the local cache under '/tmp'. Each copy is checked against the server before use; delete the directory to force a full re-download.
+2026-11-13T16:37:40Z [6,793ms] [Warning] [isaaclab.sim.schemas.schemas] Skipping fragment updates on instanced prims matched by '/World/envs/env_0/Robot(/.*)?': ['/World/envs/env_0/Robot/Geometry/pelvis/left_hip_rotation/left_hip/left_thigh/left_shin/left_foot_rotation/left_foot_link/left_foot_1/left_foot', '/World/envs/env_0/Robot/Geometry/pelvis/left_hip_rotation/left_hip/left_thigh/left_shin/left_foot_rotation/left_foot_rotation_1/left_foot_rotation', '/World/envs/env_0/Robot/Geometry/pelvis/left_hip_rotation/left_hip/left_thigh/left_shin/left_shin_1/left_shin', '/World/envs/env_0/Robot/Geometry/pelvis/left_hip_rotation/left_hip/left_thigh/left_thigh_1/left_thigh', '/World/envs/env_0/Robot/Geometry/pelvis/left_hip_rotation/left_hip/left_hip_1/left_hip', '/World/envs/env_0/Robot/Geometry/pelvis/left_hip_rotation/left_hip_rotation_1/left_hip_rotation', '/World/envs/env_0/Robot/Geometry/pelvis/right_hip_rotation/right_hip/right_thigh/right_shin/right_foot_rotation/right_foot_link/right_foot_1/left_foot', '/World/envs/env_0/Robot/Geometry/pelvis/right_hip_rotation/right_hip/right_thigh/right_shin/right_foot_rotation/right_foot_rotation_1/left_foot_rotation', '/World/envs/env_0/Robot/Geometry/pelvis/right_hip_rotation/right_hip/right_thigh/right_shin/right_shin_1/left_shin', '/World/envs/env_0/Robot/Geometry/pelvis/right_hip_rotation/right_hip/right_thigh/right_thigh_1/left_thigh', '/World/envs/env_0/Robot/Geometry/pelvis/right_hip_rotation/right_hip/right_hip_1/left_hip', '/World/envs/env_0/Robot/Geometry/pelvis/right_hip_rotation/right_hip_rotation_1/left_hip_rotation', '/World/envs/env_0/Robot/Geometry/pelvis/pelvis_1/pelvis'].
+2026-11-13T16:37:40Z [6,793ms] [Warning] [isaaclab.sim.schemas.schemas] No collision targets matched expression '/World/envs/env_0/Robot(/.*)?'; nothing was authored.
+2026-11-13T16:37:46Z [12,831ms] [Warning] [usdrt.population.plugin] Last global time was not created. Did you call setEnableUsdNoticeHandling?
