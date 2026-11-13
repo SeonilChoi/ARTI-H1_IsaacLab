@@ -62,7 +62,7 @@ else
   EVAL_TASK=${TASK/-Direct-v0/-Play-Direct-v0}
   echo "[$TAG] eval ($EVAL_TASK)"
   # shellcheck disable=SC2086
-  RSI_EVAL_TASK=$EVAL_TASK timeout 1800 $PY server/rsi_eval.py --headless --ckpt "$OUT/final.pt" $OVR > "$OUT/eval.log" 2>&1
+  RSI_EVAL_TASK=$EVAL_TASK timeout 1800 $PY server/rsi_eval.py --ckpt "$OUT/final.pt" $OVR > "$OUT/eval.log" 2>&1
   grep -a "^RSI_JSON" "$OUT/eval.log" | sed 's/^RSI_JSON //' > "$OUT/eval.json"
   if [ -s "$OUT/eval.json" ]; then
     python3 -c "import json;s=json.load(open('$OUT/eval.json'))['summary'];print({k:round(v,3) for k,v in s.items() if not k.startswith('sym_')})" | tee "$OUT/eval_summary.txt"
