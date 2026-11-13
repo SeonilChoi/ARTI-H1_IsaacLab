@@ -219,6 +219,21 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             target = self._apply_actuator_model(target)
         self.robot.actuators.target_command.set_position_index(value=target)
         self._apply_balance_support()
+        self._apply_yaw_torque_bias()
+
+    def _apply_yaw_torque_bias(self):
+        """Per-episode constant world-z torque on the pelvis (cfg.yaw_torque_bias_range, Nm).
+
+        Real KB logs turn by themselves by a different amount every session (11-13: +0.09 rad/s walking forward at 09:20,
+        -0.02 rad/s and a stalled left turn at 12:42) that no joint zero error / hip-yaw friction in sim reproduces, so the
+        policy has to close the yaw loop on the gyro against an unknown constant yaw disturbance.
+        """
+        if not hasattr(self, "yaw_torque_bias"):
+            return
+        torque = torch.zeros(self.num_envs, 1, 3, device=self.device)
+        torque[:, 0, 2] = self.yaw_torque_bias
+        self.robot.instantaneous_wrench_composer.add_forces_and_torques_index(
+            forces=torch.zeros_like(torque), torques=torque, body_ids=self._support_body_ids, is_global=True)
 
     # ------------------------------------------------------------------ helpers
     def _foot_positions(self) -> torch.Tensor:
@@ -618,4 +633,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
                 )
             draw = torch.rand((k, self.joint_obs_offset.shape[1]), device=self.device) * 2.0 - 1.0
             self.joint_obs_offset[env_ids] = draw * self._joint_obs_offset_range
+        lo, hi = self.cfg.yaw_torque_bias_range
+        if lo != 0.0 or hi != 0.0:
+            if not hasattr(self, "yaw_torque_bias"):
+                self.yaw_torque_bias = torch.zeros(self.num_envs, device=self.device)
+            self.yaw_torque_bias[env_ids] = torch.empty(k, device=self.device).uniform_(lo, hi)
         self._sample_commands(env_ids)

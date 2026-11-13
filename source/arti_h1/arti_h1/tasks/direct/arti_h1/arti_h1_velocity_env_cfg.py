@@ -296,6 +296,9 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     actuator_delay_extra_curriculum_steps = (1000 * NUM_STEPS_PER_ENV, 3000 * NUM_STEPS_PER_ENV)
     # Not a warm start: every schedule starts at step 0.
     curriculum_step_offset = 0
+    # Per-episode constant yaw torque on the pelvis (Nm, world z), uniform in this range; (0, 0) = off.
+    # Real KB sessions drift +0.09 / -0.02 rad/s in yaw with no sim joint-error explanation (11-13 real2sim).
+    yaw_torque_bias_range = (0.0, 0.0)
 
     # Reset: home pose on the ground, random yaw, small drop.
     reset_root_height_range = (0.0, 0.01)

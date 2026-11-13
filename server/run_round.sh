@@ -7,7 +7,7 @@
 #
 # What it does
 #   1. runs <train script> and logs it to server/results/<tag>/train.log
-#   2. copies the run's results into server/results/<tag>/:
+#   2. copies the run's results into server/results/<tag>/ and runs the stability-gate eval (eval.json):
 #        final.pt (the last checkpoint), params/ (env.yaml / agent.yaml), the tensorboard events file,
 #        train.log, summary.txt (run dir, last checkpoint, git commit, timestamps)
 #   3. records a 40 s play video (h1_vel_<tag>.mp4, no pushes) unless --no-video
@@ -18,7 +18,7 @@
 # How to send the results back (pick one)
 #   a) --push                    -> on the local PC: git pull (+ git lfs pull) on the server branch
 #   b) scp the tarball           -> scp <server>:<repo>/server/results/<tag>.tar.gz .
-#   Either way the local side only needs server/results/<tag>/; eval (rsi_eval.py) is run locally.
+#   Either way the local side only needs server/results/<tag>/ (eval.json / eval_summary.txt are already in it).
 set -u
 TAG=${1:?usage: run_round.sh <tag> <train script> [num_envs] [--push] [--no-video]}
 SCRIPT=${2:?usage: run_round.sh <tag> <train script> [num_envs] [--push] [--no-video]}
@@ -53,9 +53,20 @@ else
   cp "$CK" "$OUT/final.pt"
   cp -r "$RUN/params" "$OUT/" 2>/dev/null
   cp "$RUN"/events.out.tfevents.* "$OUT/" 2>/dev/null
+  TASK=$(grep -oE -- "--task [^ ]+" "$SCRIPT" | head -1 | cut -d' ' -f2)
+  OVR=$(grep -oE "(env|agent)\.[A-Za-z0-9_.]+=('[^']*'|[^ \\\\]+)" "$SCRIPT" | grep -vE "curriculum_step_offset|trainer.timesteps" | tr -d "'" | tr '\n' ' ')
+  # stability-gate eval (falls, push, tilt, drift, tracking) on the Play task, same env overrides as training
+  EVAL_TASK=${TASK/-Direct-v0/-Play-Direct-v0}
+  echo "[$TAG] eval ($EVAL_TASK)"
+  # shellcheck disable=SC2086
+  RSI_EVAL_TASK=$EVAL_TASK timeout 1800 $PY server/rsi_eval.py --headless --ckpt "$OUT/final.pt" $OVR > "$OUT/eval.log" 2>&1
+  grep -a "^RSI_JSON" "$OUT/eval.log" | sed 's/^RSI_JSON //' > "$OUT/eval.json"
+  if [ -s "$OUT/eval.json" ]; then
+    python3 -c "import json;s=json.load(open('$OUT/eval.json'))['summary'];print({k:round(v,3) for k,v in s.items() if not k.startswith('sym_')})" | tee "$OUT/eval_summary.txt"
+  else
+    echo "[$TAG] eval failed (see $OUT/eval.log)"
+  fi
   if [ "$VIDEO" = 1 ]; then
-    TASK=$(grep -oE -- "--task [^ ]+" "$SCRIPT" | head -1 | cut -d' ' -f2)
-    OVR=$(grep -oE "(env|agent)\.[A-Za-z0-9_.]+=('[^']*'|[^ \\\\]+)" "$SCRIPT" | grep -vE "curriculum_step_offset|trainer.timesteps" | tr -d "'" | tr '\n' ' ')
     echo "[$TAG] recording video ($TASK)"
     # shellcheck disable=SC2086
     timeout 1800 $PY scripts/skrl/play.py --task "$TASK" physics=isaacsim_physx --checkpoint "$OUT/final.pt" \
@@ -79,7 +90,7 @@ echo "[$TAG] packed: server/results/$TAG.tar.gz ($(du -h "server/results/$TAG.ta
 
 if [ "$PUSH" = 1 ]; then
   git lfs install --local >/dev/null 2>&1
-  git add -f "$OUT/summary.txt" "$OUT/train.log" "$OUT"/params "$OUT"/events.out.tfevents.* "$OUT/final.pt" "$OUT"/*.mp4 2>/dev/null
+  git add -f "$OUT/summary.txt" "$OUT/train.log" "$OUT"/eval.json "$OUT"/eval_summary.txt "$OUT"/eval.log "$OUT"/params "$OUT"/events.out.tfevents.* "$OUT/final.pt" "$OUT"/*.mp4 2>/dev/null
   git commit -m "server results: $TAG ($(head -1 "$OUT/summary.txt"))" && git push origin HEAD \
     && echo "[$TAG] pushed to $(git rev-parse --abbrev-ref HEAD)" || echo "[$TAG] push failed - send the tarball with scp instead"
 fi
