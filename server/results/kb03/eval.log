@@ -1,0 +1,25 @@
+AppLauncher is deprecated; use isaaclab.app.launch_simulation.
+[INFO]: Running headless because '--viz kit' was not requested. Pass it to open a viewport.
+[INFO]: Using device: cuda:0
+[INFO]: Loading experience file: /opt/isaac/IsaacLab-main/apps/isaaclab.python.headless.kit
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1794559903.841277   76833 descriptor_database.cc:633] File already exists in database: grpc/health/v1/health.proto
+W0000 00:00:1794559903.841323   76833 message.cc:301] Protobuf GeneratedMessageFactory: File is already registered: grpc/health/v1/health.proto
+Warning: Possible version incompatibility. Attempting to load carb::ujitso::IFactory with version v0.3 against v0.2.
+[ISAACLAB] KitLauncher initialization complete
+Warp 1.17.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.2
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA L40S" (44 GiB, sm_89, mempool enabled)
+   Kernel cache:
+     /home/iicuser/.cache/warp/1.17.0
+[INFO]: Parsing configuration from: arti_h1.tasks.direct.arti_h1.arti_h1_velocity_env_cfg:ArtiH1VelocityKBEnvCfg_PLAY
+Loading user config located at: '/opt/isaac/IsaacLab-main/.venv/lib/python3.12/site-packages/isaacsim/kit/data/Kit/IsaacLab/3.0/user.config.json'
+2026-11-13T08:51:44Z [0ms] [Warning] [omni.platforminfo.plugin] failed to open the default display.  Can't verify X Server version.
+2026-11-13T08:51:44Z [5ms] [Warning] [omni.usd_config.extension] Enable omni.materialx.libs extension to use MaterialX
+Traceback (most recent call last):
+  File "/opt/isaac/projects/arti_h1/server/rsi_eval.py", line 17, in <module>
+    k, v = kv.split("=", 1)
+    ^^^^
+ValueError: not enough values to unpack (expected 2, got 1)

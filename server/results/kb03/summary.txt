@@ -1,0 +1,11 @@
+status: OK
+tag: kb03
+script: server/train_kb03.sh
+num_envs: 4096
+run: logs/skrl/arti_h1_velocity/2026-11-13_05-31-35_ppo_torch
+checkpoint: logs/skrl/arti_h1_velocity/2026-11-13_05-31-35_ppo_torch/checkpoints/agent_240000.pt
+commit: ec0aa1f (server)
+host: ip-10-126-198-57
+start: 2026-11-13 05:31:31
+end: 2026-11-13 08:53:36
+last progress: 100%|██████████| 240000/240000 [3:19:43<00:00, 20.03it/s]
