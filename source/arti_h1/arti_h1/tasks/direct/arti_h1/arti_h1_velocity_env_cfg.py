@@ -185,6 +185,12 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # and the ~1 s average air ratios of the two feet are pushed together (|ema_L - ema_R|, gated on a moving command).
     rew_air_asymmetry = -3.0
     air_asymmetry_tau_s = 1.0
+    # cadence ceiling (11-13). On the robot the gait speeds up inside a walking bout (1.4 -> 2.0-2.5 Hz per foot, short
+    # steps, with a left yaw); in sim r21 steps at ~1.35 Hz per foot (1.5 Hz lateral). Per lift-off: cost =
+    # relu(cadence_min_period_s - time since the same foot's previous lift-off) / cadence_min_period_s, gated on a moving
+    # command. 0.55 s = 1.8 Hz leaves normal sim gaits untouched (unlike air_time_min_s 0.2, which collapsed kb03).
+    rew_cadence = 0.0
+    cadence_min_period_s = 0.55
     # gait symmetry. With the legs not mirror images (right leg = left leg rotated pi about z), the knee-fine-tune policy
     # lifted the right foot 0.3-1.3 cm lower than the left (2.7-3.1 vs 3.3-4.0 cm), landed it 0.5 cm further forward
     # and 1.1 cm wider when walking forward, and stepped the left foot forward / the right foot back in place (yaw drift).
@@ -299,6 +305,36 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # Per-episode constant yaw torque on the pelvis (Nm, world z), uniform in this range; (0, 0) = off.
     # Real KB sessions drift +0.09 / -0.02 rad/s in yaw with no sim joint-error explanation (11-13 real2sim).
     yaw_torque_bias_range = (0.0, 0.0)
+    # DR widening (11-14, kb05): start real-matched / narrow, widen linearly to the usual cfg + event ranges over
+    # dr_widen_steps (absolute curriculum steps = common_step_counter + curriculum_step_offset; (0, 0) = off, final ranges
+    # from the start). Startup-type draws are redrawn for all envs at dr_widen_levels evenly spaced levels.
+    dr_widen_steps = (0, 0)
+    dr_widen_levels = 5
+    dr_start_static_friction = (0.7, 1.0)
+    dr_start_dynamic_friction = (0.6, 0.9)
+    dr_start_pelvis_mass = (-0.2, 0.2)
+    dr_start_pelvis_com = 0.005
+    dr_start_kp = (1.05, 1.2)
+    dr_start_kd = (0.9, 1.1)
+    dr_start_push_x = (-0.2, 0.2)
+    dr_start_push_y = (-0.1, 0.1)
+    dr_start_coulomb_scale = (0.4, 0.6)
+    dr_start_armature_scale = (0.9, 1.1)
+    dr_start_delay_jitter_ms = (-2.0, 2.0)
+    dr_start_joint_offset_frac = 0.15
+    dr_start_yaw_bias = (-0.6, 0.6)
+    # Stability gate (11-14, nr04e): dr_gate_min_steps > 0 replaces the time schedule; the level goes up one step when it
+    # has been held dr_gate_min_steps env steps and the EMA (dr_gate_ema_steps) stand-still ratio < dr_gate_max_stand_still,
+    # fall rate (falls / env / s) <= dr_gate_fall_ratio x max(level-0 reference, dr_gate_fall_floor) and linear tracking
+    # error <= dr_gate_track_ratio x level-0 reference. It is a collapse detector, not a quality bar (wider DR raises
+    # falls / error a bit by itself).
+    # A level that never passes stays (the log says which signal failed).
+    dr_gate_min_steps = 0
+    dr_gate_ema_steps = 2000.0
+    dr_gate_max_stand_still = 0.08
+    dr_gate_fall_ratio = 3.0
+    dr_gate_fall_floor = 0.003
+    dr_gate_track_ratio = 1.3
 
     # Reset: home pose on the ground, random yaw, small drop.
     reset_root_height_range = (0.0, 0.01)

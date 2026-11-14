@@ -57,7 +57,7 @@ else
   cp -r "$RUN/params" "$OUT/" 2>/dev/null
   cp "$RUN"/events.out.tfevents.* "$OUT/" 2>/dev/null
   TASK=$(grep -oE -- "--task [^ ]+" "$SCRIPT" | head -1 | cut -d' ' -f2)
-  OVR=$(grep -oE "(env|agent)\.[A-Za-z0-9_.]+=('[^']*'|[^ \\\\]+)" "$SCRIPT" | grep -vE "curriculum_step_offset|trainer.timesteps" | tr -d "'" | tr '\n' ' ')
+  OVR=$(grep -oE "(env|agent)\.[A-Za-z0-9_.]+=('[^']*'|[^ \\\\]+)" "$SCRIPT" | grep -vE "curriculum_step_offset|trainer.timesteps|env\.dr_|curriculum_steps=" | tr -d "'" | tr '\n' ' ')
   # stability-gate eval (falls, push, tilt, drift, tracking) on the Play task, same env overrides as training
   EVAL_TASK=${TASK/-Direct-v0/-Play-Direct-v0}
   echo "[$TAG] eval ($EVAL_TASK)"
@@ -72,7 +72,7 @@ else
   if [ "$VIDEO" = 1 ]; then
     echo "[$TAG] recording video ($TASK)"
     # shellcheck disable=SC2086
-    timeout 1800 $PY scripts/skrl/play.py --task "$TASK" physics=isaacsim_physx --checkpoint "$OUT/final.pt" \
+    timeout 1800 $PY scripts/skrl/play.py --task "$TASK" physics=isaacsim_physx --camera front --camera_follow --checkpoint "$OUT/final.pt" \
       --num_envs 1 --video --video_length 2400 --no_push $OVR > "$OUT/video.log" 2>&1
     V=$(find "$OUT" logs/skrl -newer "$OUT/final.pt" -name 'clip_0000.mp4' 2>/dev/null | head -1)
     if [ -n "$V" ]; then cp "$V" "$OUT/h1_vel_$TAG.mp4"; else echo "[$TAG] video failed (see $OUT/video.log)"; fi

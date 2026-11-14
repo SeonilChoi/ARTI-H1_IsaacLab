@@ -428,7 +428,9 @@ class ArtiH1AmpEnv(DirectRLEnv):
         """
         if not self.cfg.actuator_delay_extra_ms:
             return
-        scale = self._curriculum_fraction(0.0, self.cfg.actuator_delay_extra_curriculum_steps)
+        scale = getattr(self, "_dr_extra_scale", None)  # stability-gated DR widening (velocity env) drives the ramp
+        if scale is None:
+            scale = self._curriculum_fraction(0.0, self.cfg.actuator_delay_extra_curriculum_steps)
         names = self.robot.data.joint_names
         types = sorted({nm.split("_", 1)[1] for nm in names})
         draw = torch.rand(len(env_ids), len(types), device=self.device)[:, [types.index(nm.split("_", 1)[1]) for nm in names]]
