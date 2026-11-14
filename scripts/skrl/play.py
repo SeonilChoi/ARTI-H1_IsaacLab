@@ -234,8 +234,9 @@ def main(argv: list[str] | None = None) -> None:
         if velocity and args_cli.camera == "front":
             # fixed camera in front of the start point (robot walks toward +x), far enough to keep the whole sequence
             # (asset_root: placed at the robot's start position, it does not move afterwards)
-            env_cfg.viewer.eye = (2.6, 0.0, 0.7)
-            env_cfg.viewer.lookat = (0.0, 0.0, 0.2)
+            # with --camera_follow the offset rides along with the robot root, so it can sit closer
+            env_cfg.viewer.eye = (1.1, 0.0, 0.4) if args_cli.camera_follow else (2.6, 0.0, 0.7)
+            env_cfg.viewer.lookat = (0.0, 0.0, 0.18)
         else:
             env_cfg.viewer.eye = (0.0, -1.6, 0.55) if velocity else VIDEO_CAMERA_EYE
             env_cfg.viewer.lookat = (0.0, 0.0, 0.15) if velocity else VIDEO_CAMERA_LOOKAT

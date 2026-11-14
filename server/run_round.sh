@@ -10,7 +10,7 @@
 #   2. copies the run's results into server/results/<tag>/ and runs the stability-gate eval (eval.json):
 #        final.pt (the last checkpoint), params/ (env.yaml / agent.yaml), the tensorboard events file,
 #        train.log, summary.txt (run dir, last checkpoint, git commit, timestamps)
-#   3. records a 40 s play video (h1_vel_<tag>.mp4, no pushes) unless --no-video
+#   3. records a 40 s play video (h1_vel_<tag>.mp4, front camera following the robot, no pushes) unless --no-video
 #   4. packs everything into server/results/<tag>.tar.gz (for scp)
 #   5. --push: commits server/results/<tag>/ to the current branch and pushes it
 #      (*.pt and *.mp4 go through git LFS; needs git-lfs and push access on the server)
@@ -69,10 +69,16 @@ else
   if [ "$VIDEO" = 1 ]; then
     echo "[$TAG] recording video ($TASK)"
     # shellcheck disable=SC2086
-    timeout 1800 $PY scripts/skrl/play.py --task "$TASK" physics=isaacsim_physx --checkpoint "$OUT/final.pt" \
+    timeout 1800 $PY scripts/skrl/play.py --task "$TASK" physics=isaacsim_physx --camera front --camera_follow --checkpoint "$OUT/final.pt" \
       --num_envs 1 --video --video_length 2400 --no_push $OVR > "$OUT/video.log" 2>&1
-    V=$(find "$OUT" logs/skrl -newer "$OUT/final.pt" -name 'clip_0000.mp4' 2>/dev/null | head -1)
-    if [ -n "$V" ]; then cp "$V" "$OUT/h1_vel_$TAG.mp4"; else echo "[$TAG] video failed (see $OUT/video.log)"; fi
+    # the recorder splits 2400 frames into several clips (2000 + 400): join every clip written by this play run
+    V=$(find "$OUT" logs/skrl -newer "$OUT/final.pt" -name 'clip_*.mp4' 2>/dev/null | sort -V | head -1)
+    if [ -n "$V" ]; then
+      find "$(dirname "$V")" -newer "$OUT/final.pt" -name 'clip_*.mp4' | sort -V | sed "s|^|file '$PWD/|; s|$|'|" > "$OUT/clips.txt"
+      FF=$(command -v ffmpeg || $PY -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())" 2>/dev/null)
+      if [ -n "$FF" ] && "$FF" -y -loglevel error -f concat -safe 0 -i "$OUT/clips.txt" -c copy "$OUT/h1_vel_$TAG.mp4"; then :
+      else cp "$V" "$OUT/h1_vel_$TAG.mp4"; echo "[$TAG] clip concat failed, kept the first clip only"; fi
+    else echo "[$TAG] video failed (see $OUT/video.log)"; fi
   fi
   {
     echo "status: $([ "$RC" = 0 ] && echo OK || echo "train exit $RC")"

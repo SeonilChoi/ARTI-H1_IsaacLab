@@ -191,6 +191,14 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # command. 0.55 s = 1.8 Hz leaves normal sim gaits untouched (unlike air_time_min_s 0.2, which collapsed kb03).
     rew_cadence = 0.0
     cadence_min_period_s = 0.55
+    # anti-shudder (11-14): r21 / kb05 walk with a body roll / pitch rate 10x standing, 60-90 % of it above 3 Hz (also
+    # without any DR), i.e. a per-step shudder, not the gait sway. action_acc = sum (a_t - 2 a_t-1 + a_t-2)^2 of the
+    # executed action; foot_impact = per touchdown, (downward foot speed the step before contact)^2. 0 = off.
+    rew_action_acc = 0.0
+    rew_foot_impact = 0.0
+    # yaw shudder (11-14): straight walking wobbles in yaw at 0.11-0.20 rad/s rms, >80 % above 3 Hz, with almost no net
+    # heading drift; body_ang_vel covers roll / pitch only. L2 penalty on (wz cmd - wz body)^2. 0 = off.
+    rew_yaw_rate_err = 0.0
     # gait symmetry. With the legs not mirror images (right leg = left leg rotated pi about z), the knee-fine-tune policy
     # lifted the right foot 0.3-1.3 cm lower than the left (2.7-3.1 vs 3.3-4.0 cm), landed it 0.5 cm further forward
     # and 1.1 cm wider when walking forward, and stepped the left foot forward / the right foot back in place (yaw drift).
@@ -335,6 +343,10 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     dr_gate_fall_ratio = 3.0
     dr_gate_fall_floor = 0.003
     dr_gate_track_ratio = 1.3
+    # Level the gate starts at (a resumed run that already adapted to some levels; the reference is taken there) and the
+    # max hold (env steps) after which a level whose only failing check is tracking goes up anyway. 0 = no max hold.
+    dr_gate_start_level = 0
+    dr_gate_max_hold_steps = 0
 
     # Reset: home pose on the ground, random yaw, small drop.
     reset_root_height_range = (0.0, 0.01)

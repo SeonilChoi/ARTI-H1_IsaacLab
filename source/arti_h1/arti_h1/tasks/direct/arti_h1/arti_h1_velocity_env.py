@@ -28,7 +28,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed", "air_asymmetry", "cadence", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
+        "swing_foot_speed", "air_asymmetry", "cadence", "action_acc", "foot_impact", "yaw_rate_err", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
         "ref_swing", "hip_yaw_straight", "knee_extension", "track_yaw_velocity",
     )
 
@@ -122,6 +122,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         # each new lift-off (0 on other steps)
         self.feet_cycle_time = torch.full((n, 2), 10.0, device=dev)
         self.feet_short_cycle = torch.zeros(n, 2, device=dev)
+        # foot vertical velocity of the previous control step (touchdown impact = its downward part at first contact)
+        self.feet_vz_prev = torch.zeros(n, 2, device=dev)
         # per-foot moving averages over landings, mirrored (right y negated) so a symmetric gait gives left == right:
         # swing peak height, touchdown x / y in the heading frame relative to the root
         self.feet_land_peak_ema = torch.full((n, 2), self.cfg.foot_target_height, device=dev)
@@ -272,7 +274,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
 
     def _dr_gate_level(self) -> int:
         n_lv = max(2, int(self.cfg.dr_widen_levels))
-        lv = getattr(self, "_dr_gate_lv", 0)
+        lv = getattr(self, "_dr_gate_lv", min(int(self.cfg.dr_gate_start_level), n_lv - 1))
         step = self.common_step_counter + self.cfg.curriculum_step_offset
         if not hasattr(self, "_dr_gate_since"):
             self._dr_gate_since = max(step, self.cfg.dr_widen_steps[0])
@@ -282,16 +284,19 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         ema = {k: float(v) for k, v in et.items()}
         if not hasattr(self, "_dr_gate_ref"):
             self._dr_gate_ref = dict(ema)
-            print(f"[DR] gate reference (level 0): stand {ema['stand']:.3f} fall/s {ema['fall']:.4f} lin_err {ema['track']:.3f}", flush=True)
+            print(f"[DR] gate reference (level {lv}): stand {ema['stand']:.3f} fall/s {ema['fall']:.4f} lin_err {ema['track']:.3f}", flush=True)
         ref = self._dr_gate_ref
         ok_stand = ema["stand"] < self.cfg.dr_gate_max_stand_still
         ok_fall = ema["fall"] <= self.cfg.dr_gate_fall_ratio * max(ref["fall"], self.cfg.dr_gate_fall_floor)
         ok_track = ema["track"] <= self.cfg.dr_gate_track_ratio * ref["track"]
-        if ok_stand and ok_fall and ok_track:
+        # max hold: tracking error rises with the DR width itself (11-14 nr04e / kbL02 held level 3 for 160k steps on
+        # lin_err alone, fall rate fine), so after dr_gate_max_hold_steps the level goes up on stand-still + falls only
+        forced = 0 < self.cfg.dr_gate_max_hold_steps <= step - self._dr_gate_since and ok_stand and ok_fall
+        if (ok_stand and ok_fall and ok_track) or forced:
             self._dr_gate_lv = lv + 1
             self._dr_gate_since = step
-            print(f"[DR] gate pass at step {step}: stand {ema['stand']:.3f} fall/s {ema['fall']:.4f} lin_err {ema['track']:.3f}"
-                  f" -> level {lv + 1}", flush=True)
+            print(f"[DR] gate {'force (max hold)' if not ok_track else 'pass'} at step {step}: stand {ema['stand']:.3f} "
+                  f"fall/s {ema['fall']:.4f} lin_err {ema['track']:.3f} -> level {lv + 1}", flush=True)
             return lv + 1
         if ((step - self._dr_gate_since) // 240) % 10 == 0:
             print(f"[DR] gate hold level {lv} at step {step}: stand {ema['stand']:.3f}{'' if ok_stand else '!'} "
@@ -520,6 +525,12 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         q = d.joint_pos.torch
         limit_cost = (torch.relu(self._soft_lower - q) + torch.relu(q - self._soft_upper)).sum(-1)
         executed, previous = torch.clamp(self.actions, -1.0, 1.0), torch.clamp(self.previous_actions, -1.0, 1.0)
+        previous2 = torch.clamp(self.previous_actions2, -1.0, 1.0)
+        # touchdown impact: downward foot speed^2 of the step before first contact, per event (/ step_dt: the weight is
+        # the cost of one 1 m/s touchdown)
+        foot_vz = self._foot_velocities()[..., 2]
+        impact_v = torch.relu(-self.feet_vz_prev) * first_contact.float()
+        self.feet_vz_prev.copy_(foot_vz)
 
         in_window = (self.feet_air_time > cfg.air_time_min_s) & (self.feet_air_time < cfg.air_time_max_s)
         if cfg.air_time_single_support_only:
@@ -601,6 +612,10 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "angular_momentum": torch.sum(torch.square(self._angular_momentum()), dim=-1),
             "dof_pos_limits": limit_cost,
             "action_rate_l2": torch.sum(torch.square(executed - previous), dim=-1),
+            # second difference of the executed action: the 3-10 Hz body shudder of r21 / kb05 (11-14) lives here
+            "action_acc": torch.sum(torch.square(executed - 2.0 * previous + previous2), dim=-1),
+            "foot_impact": torch.sum(torch.square(impact_v), dim=-1) / self.step_dt,
+            "yaw_rate_err": fine_yaw_err,
             "air_time": in_window.float().sum(-1) * moving,
             "foot_clearance": torch.sum(torch.abs(height - cfg.foot_target_height) * foot_vel_xy, dim=-1) * moving,
             "foot_swing_height": swing_err.sum(-1) * moving,
@@ -651,6 +666,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "swing_foot_speed": cfg.rew_swing_foot_speed,
             "air_asymmetry": cfg.rew_air_asymmetry,
             "cadence": cfg.rew_cadence,
+            "action_acc": cfg.rew_action_acc,
+            "foot_impact": cfg.rew_foot_impact,
+            "yaw_rate_err": cfg.rew_yaw_rate_err,
             "stance_knee_flex": cfg.rew_stance_knee_flex,
             "gait_symmetry": cfg.rew_gait_symmetry,
             "stand_still_commanded": cfg.rew_stand_still_commanded,
@@ -681,6 +699,10 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "Curriculum/extra_lag_fraction": torch.tensor(
                 self._curriculum_fraction(0.0, cfg.actuator_delay_extra_curriculum_steps), device=self.device),
             "Metrics/air_time_mean": (self.feet_air_time * in_air).sum() / in_air.sum().clamp_min(1),
+            "Metrics/touchdown_vz": impact_v.sum() / first_contact.float().sum().clamp_min(1),
+            "Metrics/body_rollpitch_rate": torch.linalg.norm(ang_w[:, :2], dim=-1).mean(),
+            "Metrics/yaw_rate_err_rms": torch.sqrt(fine_yaw_err.mean()),
+            "Metrics/action_acc_rms": torch.sqrt(torch.mean(torch.square(executed - 2.0 * previous + previous2))),
             "Metrics/peak_height_mean": mean_peak_at_landing,
             "Metrics/slip_velocity_mean": (foot_vel_xy * contact).sum() / contact.sum().clamp_min(1),
             "Metrics/swing_foot_rel_speed_mean": swing_rel_speed.sum() / (~contact).sum().clamp_min(1),
@@ -792,6 +814,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.double_support_time[env_ids] = 0.0
         self.feet_cycle_time[env_ids] = 10.0
         self.feet_short_cycle[env_ids] = 0.0
+        self.feet_vz_prev[env_ids] = 0.0
         self.feet_land_peak_ema[env_ids] = self.cfg.foot_target_height
         self.feet_land_xy_ema[env_ids, :, 0] = 0.0
         self.feet_land_xy_ema[env_ids, :, 1] = self.cfg.gait_symmetry_nominal_y
