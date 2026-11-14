@@ -347,6 +347,8 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # max hold (env steps) after which a level whose only failing check is tracking goes up anyway. 0 = no max hold.
     dr_gate_start_level = 0
     dr_gate_max_hold_steps = 0
+    # EMA stand-still ratio above which the gate drops one level (collapse guard); 0 = off.
+    dr_gate_rollback_stand = 0.0
 
     # Reset: home pose on the ground, random yaw, small drop.
     reset_root_height_range = (0.0, 0.01)

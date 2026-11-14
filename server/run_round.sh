@@ -72,7 +72,8 @@ else
     timeout 1800 $PY scripts/skrl/play.py --task "$TASK" physics=isaacsim_physx --camera front --camera_follow --checkpoint "$OUT/final.pt" \
       --num_envs 1 --video --video_length 2400 --no_push $OVR > "$OUT/video.log" 2>&1
     # the recorder splits 2400 frames into several clips (2000 + 400): join every clip written by this play run
-    V=$(find "$OUT" logs/skrl -newer "$OUT/final.pt" -name 'clip_*.mp4' 2>/dev/null | sort -V | head -1)
+    # play.py writes to <checkpoint dir>/../videos/play = server/results/videos/play (clip numbers keep counting up)
+    V=$(find "$(dirname "$OUT")/videos" "$OUT" logs/skrl -newer "$OUT/final.pt" -name 'clip_*.mp4' 2>/dev/null | sort -V | head -1)
     if [ -n "$V" ]; then
       find "$(dirname "$V")" -newer "$OUT/final.pt" -name 'clip_*.mp4' | sort -V | sed "s|^|file '$PWD/|; s|$|'|" > "$OUT/clips.txt"
       FF=$(command -v ffmpeg || $PY -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())" 2>/dev/null)

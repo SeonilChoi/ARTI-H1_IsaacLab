@@ -279,6 +279,15 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         if not hasattr(self, "_dr_gate_since"):
             self._dr_gate_since = max(step, self.cfg.dr_widen_steps[0])
         et = getattr(self, "_dr_ema_t", None)
+        # rollback (11-15, nr04f stopped stepping ~70k steps after reaching the final level: stand-still 0.05 -> 0.86):
+        # an EMA stand-still ratio above dr_gate_rollback_stand drops one level (at most once per dr_gate_min_steps / 4)
+        rb = self.cfg.dr_gate_rollback_stand
+        if (rb > 0 and lv > 0 and et is not None and step % 240 == 0 and float(et["stand"]) > rb
+                and step - self._dr_gate_since >= self.cfg.dr_gate_min_steps // 4):
+            self._dr_gate_lv = lv - 1
+            self._dr_gate_since = step
+            print(f"[DR] gate rollback at step {step}: stand {float(et['stand']):.3f} > {rb} -> level {lv - 1}", flush=True)
+            return lv - 1
         if lv >= n_lv - 1 or et is None or step % 240 != 0 or step - self._dr_gate_since < self.cfg.dr_gate_min_steps:
             return lv
         ema = {k: float(v) for k, v in et.items()}
