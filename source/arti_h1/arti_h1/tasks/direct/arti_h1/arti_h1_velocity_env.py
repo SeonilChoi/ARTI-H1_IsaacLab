@@ -28,7 +28,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed", "air_asymmetry", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
+        "swing_foot_speed", "air_asymmetry", "cadence", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
         "ref_swing", "hip_yaw_straight", "knee_extension", "track_yaw_velocity",
     )
 
@@ -118,6 +118,10 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self._knee_ids = [list(self.robot.data.joint_names).index(f"{s}_knee") for s in ("left", "right")]  # feet order
         self.feet_air_ema = torch.zeros(n, 2, device=dev)  # ~1 s moving average of "foot in the air", per foot
         self.double_support_time = torch.zeros(n, device=dev)  # time with both feet down since the last lift-off
+        # cadence ceiling: time since this foot's previous lift-off, and the shortfall below cadence_min_period_s at
+        # each new lift-off (0 on other steps)
+        self.feet_cycle_time = torch.full((n, 2), 10.0, device=dev)
+        self.feet_short_cycle = torch.zeros(n, 2, device=dev)
         # per-foot moving averages over landings, mirrored (right y negated) so a symmetric gait gives left == right:
         # swing peak height, touchdown x / y in the heading frame relative to the root
         self.feet_land_peak_ema = torch.full((n, 2), self.cfg.foot_target_height, device=dev)
@@ -191,6 +195,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
 
     # ------------------------------------------------------------------ step
     def _pre_physics_step(self, actions: torch.Tensor):
+        if self._dr_on():
+            self._update_dr_widen()  # level changes mid-episode too (episodes are long, resets rare)
         self.previous_actions2.copy_(self.previous_actions)
         self.previous_actions.copy_(self.actions)
         self.actions.copy_(actions if self._policy_order_is_identity else actions[:, self.sim_joint_ids_from_policy])
@@ -220,6 +226,159 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.robot.actuators.target_command.set_position_index(value=target)
         self._apply_balance_support()
         self._apply_yaw_torque_bias()
+
+    # ------------------------------------------------------------------ domain randomisation widening
+    # Real-matched start, then the ranges widen (cfg.dr_widen_steps, absolute curriculum steps). The final ranges are the
+    # usual cfg / event values; the start ranges are cfg.dr_start_*. Per-reset draws (joint zero error, yaw bias) follow
+    # the fraction f continuously; the startup-type draws (friction, pelvis mass / CoM, PD gains, actuator delay jitter,
+    # Coulomb, armature) are redrawn for all envs at dr_widen_levels steps of f; push ranges follow the same levels.
+    # Stability-gated mode (cfg.dr_gate_min_steps > 0): the level goes up one at a time, only after it has been held for
+    # dr_gate_min_steps env steps (from dr_widen_steps[0] on) and the running gait is stable: EMA stand-still ratio below
+    # dr_gate_max_stand_still, EMA fall rate below dr_gate_fall_ratio x the level-0 reference, EMA linear tracking error
+    # below dr_gate_track_ratio x the level-0 reference (references taken when level 0 first passes its hold time).
+    # The actuator extra-lag ramp then follows the level too. dr_widen_steps[1] is unused in this mode.
+    def _dr_gated(self) -> bool:
+        return self.cfg.dr_gate_min_steps > 0
+
+    def _dr_on(self) -> bool:
+        return self._dr_gated() or self.cfg.dr_widen_steps[1] > self.cfg.dr_widen_steps[0]
+
+    def _dr_frac(self) -> float:
+        if not self._dr_on():
+            return 1.0
+        if self._dr_gated():
+            return self._dr_gate_level() / (max(2, int(self.cfg.dr_widen_levels)) - 1)
+        return self._curriculum_fraction(0.0, self.cfg.dr_widen_steps)
+
+    def _dr_gate_track(self, stand_still: torch.Tensor, lin_err: torch.Tensor):
+        """EMA of the gate signals (called from the reward step)."""
+        if not self._dr_gated():
+            return
+        # tensors (no GPU sync per step); read as floats only at the gate checks
+        a = 1.0 / max(1.0, self.cfg.dr_gate_ema_steps)
+        ema = getattr(self, "_dr_ema_t", None)
+        if ema is None:
+            self._dr_ema_t = {"stand": stand_still.detach().clone().float(), "track": lin_err.detach().clone().float(),
+                              "fall": torch.zeros((), device=self.device)}
+            return
+        ema["stand"] += a * (stand_still.float() - ema["stand"])
+        ema["track"] += a * (lin_err.float() - ema["track"])
+
+    def _dr_gate_fall(self, died: torch.Tensor):
+        ema = getattr(self, "_dr_ema_t", None)
+        if self._dr_gated() and ema is not None:
+            a = 1.0 / max(1.0, self.cfg.dr_gate_ema_steps)
+            ema["fall"] += a * (died.float().mean() / self.step_dt - ema["fall"])
+
+    def _dr_gate_level(self) -> int:
+        n_lv = max(2, int(self.cfg.dr_widen_levels))
+        lv = getattr(self, "_dr_gate_lv", 0)
+        step = self.common_step_counter + self.cfg.curriculum_step_offset
+        if not hasattr(self, "_dr_gate_since"):
+            self._dr_gate_since = max(step, self.cfg.dr_widen_steps[0])
+        et = getattr(self, "_dr_ema_t", None)
+        if lv >= n_lv - 1 or et is None or step % 240 != 0 or step - self._dr_gate_since < self.cfg.dr_gate_min_steps:
+            return lv
+        ema = {k: float(v) for k, v in et.items()}
+        if not hasattr(self, "_dr_gate_ref"):
+            self._dr_gate_ref = dict(ema)
+            print(f"[DR] gate reference (level 0): stand {ema['stand']:.3f} fall/s {ema['fall']:.4f} lin_err {ema['track']:.3f}", flush=True)
+        ref = self._dr_gate_ref
+        ok_stand = ema["stand"] < self.cfg.dr_gate_max_stand_still
+        ok_fall = ema["fall"] <= self.cfg.dr_gate_fall_ratio * max(ref["fall"], self.cfg.dr_gate_fall_floor)
+        ok_track = ema["track"] <= self.cfg.dr_gate_track_ratio * ref["track"]
+        if ok_stand and ok_fall and ok_track:
+            self._dr_gate_lv = lv + 1
+            self._dr_gate_since = step
+            print(f"[DR] gate pass at step {step}: stand {ema['stand']:.3f} fall/s {ema['fall']:.4f} lin_err {ema['track']:.3f}"
+                  f" -> level {lv + 1}", flush=True)
+            return lv + 1
+        if ((step - self._dr_gate_since) // 240) % 10 == 0:
+            print(f"[DR] gate hold level {lv} at step {step}: stand {ema['stand']:.3f}{'' if ok_stand else '!'} "
+                  f"fall/s {ema['fall']:.4f}{'' if ok_fall else '!'} lin_err {ema['track']:.3f}{'' if ok_track else '!'}", flush=True)
+        return lv
+
+    def _dr_lerp(self, start, final, f: float | None = None):
+        f = getattr(self, "_dr_f", 1.0) if f is None else f
+        if not self._dr_on():
+            f = 1.0
+        if isinstance(start, (tuple, list)):
+            return tuple(a + f * (b - a) for a, b in zip(start, final))
+        return start + f * (final - start)
+
+    def _update_dr_widen(self):
+        if not self._dr_on() or not hasattr(self, "event_manager"):
+            return
+        self._dr_f = self._dr_frac()
+        n_lv = max(2, int(self.cfg.dr_widen_levels))
+        level = min(int(self._dr_f * (n_lv - 1) + 1e-6), n_lv - 1)
+        if level == getattr(self, "_dr_level", -1):
+            return
+        self._dr_level = level
+        fq = level / (n_lv - 1)
+        if self._dr_gated():
+            self._dr_extra_scale = fq
+        cfg, ev = self.cfg, self.event_manager
+        if not hasattr(self, "_dr_final"):
+            import copy
+            self._dr_final = {nm: copy.deepcopy(ev.get_term_cfg(nm).params)
+                              for nm in ("physics_material", "add_pelvis_mass", "pelvis_com", "actuator_gains", "push_robot")
+                              if nm in ev.active_terms.get("startup", []) + ev.active_terms.get("interval", [])}
+            self._dr_final["coulomb"] = tuple(cfg.actuator_coulomb_scale_range)
+            self._dr_final["armature"] = tuple(cfg.actuator_armature_scale_range)
+            self._dr_final["jitter"] = tuple(cfg.actuator_delay_jitter_ms)
+        fin = self._dr_final
+        L = lambda a, b: self._dr_lerp(a, b, fq)
+        new = {}
+        if "physics_material" in fin:
+            new["physics_material"] = {"static_friction_range": L(cfg.dr_start_static_friction, fin["physics_material"]["static_friction_range"]),
+                                       "dynamic_friction_range": L(cfg.dr_start_dynamic_friction, fin["physics_material"]["dynamic_friction_range"])}
+        if "add_pelvis_mass" in fin:
+            new["add_pelvis_mass"] = {"mass_distribution_params": L(cfg.dr_start_pelvis_mass, fin["add_pelvis_mass"]["mass_distribution_params"])}
+        if "pelvis_com" in fin:
+            new["pelvis_com"] = {"com_range": {ax: L((-cfg.dr_start_pelvis_com, cfg.dr_start_pelvis_com), r) for ax, r in fin["pelvis_com"]["com_range"].items()}}
+        if "actuator_gains" in fin:
+            new["actuator_gains"] = {"stiffness_distribution_params": L(cfg.dr_start_kp, fin["actuator_gains"]["stiffness_distribution_params"]),
+                                     "damping_distribution_params": L(cfg.dr_start_kd, fin["actuator_gains"]["damping_distribution_params"])}
+        if "push_robot" in fin:
+            vr = fin["push_robot"]["velocity_range"]
+            new["push_robot"] = {"velocity_range": {**vr, "x": L(cfg.dr_start_push_x, vr["x"]), "y": L(cfg.dr_start_push_y, vr["y"])}}
+        for nm, upd in new.items():
+            term = ev.get_term_cfg(nm)
+            term.params.update(upd)
+            if nm == "push_robot":
+                continue
+            impl = getattr(term.func, "_impl", None)
+            if nm == "physics_material" and impl is not None and hasattr(impl, "material_buckets"):
+                p = term.params
+                nb = impl.material_buckets.shape[0]
+                lo = torch.tensor([p["static_friction_range"][0], p["dynamic_friction_range"][0], p["restitution_range"][0]])
+                hi = torch.tensor([p["static_friction_range"][1], p["dynamic_friction_range"][1], p["restitution_range"][1]])
+                b = lo + torch.rand(nb, 3) * (hi - lo)
+                if p.get("make_consistent", False):
+                    b[:, 1] = torch.min(b[:, 0], b[:, 1])
+                impl.material_buckets = b
+            if callable(term.func) and not isinstance(term.func, type):
+                term.func(self, None, **term.params)
+        if cfg.actuator_model and hasattr(self, "actuator_base_delay_ms"):
+            names = self.robot.data.joint_names
+            def per_joint(values):
+                if isinstance(values, str):
+                    import yaml
+                    values = yaml.safe_load(values.replace(":", ": ")) or {}
+                return torch.tensor([values[nm.split("_", 1)[1]] for nm in names], device=self.device, dtype=torch.float32)
+            n = self.num_envs
+            jlo, jhi = L(cfg.dr_start_delay_jitter_ms, fin["jitter"])
+            self.actuator_base_delay_ms = (per_joint(cfg.actuator_delay_ms)[None, :] + torch.empty(n, 1, device=self.device).uniform_(jlo, jhi)).clamp_min(0.0)
+            self._resample_actuator_delay(torch.arange(n, device=self.device)) if cfg.actuator_delay_extra_ms else None
+            if not cfg.actuator_delay_extra_ms:
+                steps = torch.round(self.actuator_base_delay_ms / 1000.0 / cfg.sim.dt).long()
+                self.actuator_delay_steps.copy_(steps.clamp(0, self.actuator_buffer.shape[0] - 1 - getattr(self, "actuator_jitter_max", 0)))
+            clo, chi = L(cfg.dr_start_coulomb_scale, fin["coulomb"])
+            self.actuator_coulomb = per_joint(cfg.actuator_coulomb)[None, :] * torch.empty(n, 1, device=self.device).uniform_(clo, chi)
+            alo, ahi = L(cfg.dr_start_armature_scale, fin["armature"])
+            self.robot.write_joint_armature_to_sim_index(armature=per_joint(cfg.actuator_armature)[None, :] * torch.empty(n, 1, device=self.device).uniform_(alo, ahi))
+        print(f"[DR] widen level {level}/{n_lv - 1} (f {self._dr_f:.2f}): " + ", ".join(f"{k}={v}" for k, v in new.items()), flush=True)
 
     def _apply_yaw_torque_bias(self):
         """Per-episode constant world-z torque on the pelvis (cfg.yaw_torque_bias_range, Nm).
@@ -289,6 +448,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_other_swung.copy_((self.feet_other_swung & ~lift_off) | real_swing.flip(-1))
         alpha = min(1.0, self.step_dt / self.cfg.air_asymmetry_tau_s)
         self.feet_air_ema.add_(alpha * ((~contact).float() - self.feet_air_ema))
+        short = torch.relu(self.cfg.cadence_min_period_s - self.feet_cycle_time) / self.cfg.cadence_min_period_s
+        self.feet_short_cycle.copy_(torch.where(lift_off, short, torch.zeros_like(short)))
+        self.feet_cycle_time.copy_(torch.where(lift_off, torch.zeros_like(self.feet_cycle_time), self.feet_cycle_time + self.step_dt))
         # in-place updates: the buffers must stay normal tensors when stepped under torch.inference_mode (play / eval)
         self.feet_air_time.copy_(torch.where(contact, torch.zeros_like(self.feet_air_time), self.feet_air_time + self.step_dt))
         self.feet_peak_height.copy_(torch.where(contact, self.feet_peak_height, torch.maximum(self.feet_peak_height, height)))
@@ -450,6 +612,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "track_angular_velocity_fine": torch.exp(-fine_yaw_err / cfg.track_angular_velocity_fine_std**2),
             "swing_foot_speed": torch.sum(torch.square(torch.relu(swing_rel_speed - cfg.swing_foot_free_speed)), dim=-1),
             "air_asymmetry": torch.abs(self.feet_air_ema[:, 0] - self.feet_air_ema[:, 1]) * moving,
+            # per lift-off event (divided by step_dt so the weight is the cost of one fully short step)
+            "cadence": self.feet_short_cycle.sum(-1) * moving / self.step_dt,
             "stance_knee_flex": torch.sum(torch.square(torch.relu(knee_flex - cfg.stance_knee_free_flex)) * contact.float(), dim=-1),
             # gait start: both feet down for longer than a normal double-support phase while a motion is commanded
             # lateral-only tracking, active under a lateral command (|vy cmd| > lateral_cmd_min)
@@ -486,6 +650,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "track_angular_velocity_fine": cfg.rew_track_angular_velocity_fine,
             "swing_foot_speed": cfg.rew_swing_foot_speed,
             "air_asymmetry": cfg.rew_air_asymmetry,
+            "cadence": cfg.rew_cadence,
             "stance_knee_flex": cfg.rew_stance_knee_flex,
             "gait_symmetry": cfg.rew_gait_symmetry,
             "stand_still_commanded": cfg.rew_stand_still_commanded,
@@ -534,7 +699,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             / (swing * moving[:, None]).sum().clamp_min(1),
             "Metrics/hip_yaw_left_deg": torch.rad2deg((hip_yaw_rel[:, 0] * straight).sum() / straight.sum().clamp_min(1)),
             "Metrics/hip_yaw_right_deg": torch.rad2deg((hip_yaw_rel[:, 1] * straight).sum() / straight.sum().clamp_min(1)),
-            "Metrics/stand_still_commanded_ratio": (moving * (self.double_support_time > cfg.max_double_support_s).float()).sum()
+            "Metrics/stand_still_commanded_ratio": self._dr_ss_ratio(moving, cfg)
             / moving.sum().clamp_min(1),
             "Metrics/rewarded_swing_ratio": in_window.float().sum() / in_air.float().sum().clamp_min(1),
             "Metrics/feet_lateral_distance_m": lateral.mean(),
@@ -552,6 +717,14 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         return reward
 
     # ------------------------------------------------------------------ dones / reset
+    def _dr_ss_ratio(self, moving, cfg):
+        num = (moving * (self.double_support_time > cfg.max_double_support_s).float()).sum()
+        if self._dr_gated():
+            lin_b = self.robot.data.root_lin_vel_b.torch
+            err = torch.sqrt(torch.sum(torch.square(self.commands[:, :2] - lin_b[:, :2]), dim=-1)).mean()
+            self._dr_gate_track(num / moving.sum().clamp_min(1), err)
+        return num
+
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         quat = self.robot.data.body_quat_w.torch[:, self.termination_body_index]
@@ -561,6 +734,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         if self.termination_min_up_z is not None:
             up_z = quat_apply(quat, self.up_axis_b.expand(self.num_envs, -1))[:, 2]
             died |= up_z < self.termination_min_up_z
+        self._dr_gate_fall(died)
         return died, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
@@ -576,6 +750,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.robot.reset(env_ids)
         super()._reset_idx(env_ids)
         k = len(env_ids)
+        self._update_dr_widen()
 
         root_state = self._default_root_state(env_ids)
         root_state[:, :3] += self.scene.env_origins[env_ids]
@@ -615,6 +790,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_other_swung[env_ids] = True
         self.feet_air_ema[env_ids] = 0.0
         self.double_support_time[env_ids] = 0.0
+        self.feet_cycle_time[env_ids] = 10.0
+        self.feet_short_cycle[env_ids] = 0.0
         self.feet_land_peak_ema[env_ids] = self.cfg.foot_target_height
         self.feet_land_xy_ema[env_ids, :, 0] = 0.0
         self.feet_land_xy_ema[env_ids, :, 1] = self.cfg.gait_symmetry_nominal_y
@@ -632,8 +809,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
                     device=self.device, dtype=torch.float32,
                 )
             draw = torch.rand((k, self.joint_obs_offset.shape[1]), device=self.device) * 2.0 - 1.0
-            self.joint_obs_offset[env_ids] = draw * self._joint_obs_offset_range
-        lo, hi = self.cfg.yaw_torque_bias_range
+            self.joint_obs_offset[env_ids] = draw * self._joint_obs_offset_range * self._dr_lerp(self.cfg.dr_start_joint_offset_frac, 1.0)
+        lo, hi = self._dr_lerp(self.cfg.dr_start_yaw_bias, self.cfg.yaw_torque_bias_range) if self._dr_on() else self.cfg.yaw_torque_bias_range
         if lo != 0.0 or hi != 0.0:
             if not hasattr(self, "yaw_torque_bias"):
                 self.yaw_torque_bias = torch.zeros(self.num_envs, device=self.device)

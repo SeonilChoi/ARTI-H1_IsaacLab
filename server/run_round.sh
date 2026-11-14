@@ -54,7 +54,7 @@ else
   cp -r "$RUN/params" "$OUT/" 2>/dev/null
   cp "$RUN"/events.out.tfevents.* "$OUT/" 2>/dev/null
   TASK=$(grep -oE -- "--task [^ ]+" "$SCRIPT" | head -1 | cut -d' ' -f2)
-  OVR=$(grep -oE "(env|agent)\.[A-Za-z0-9_.]+=('[^']*'|[^ \\\\]+)" "$SCRIPT" | grep -vE "curriculum_step_offset|trainer.timesteps" | tr -d "'" | tr '\n' ' ')
+  OVR=$(grep -oE "(env|agent)\.[A-Za-z0-9_.]+=('[^']*'|[^ \\\\]+)" "$SCRIPT" | grep -vE "curriculum_step_offset|trainer.timesteps|env\.dr_|curriculum_steps=" | tr -d "'" | tr '\n' ' ')
   # stability-gate eval (falls, push, tilt, drift, tracking) on the Play task, same env overrides as training
   EVAL_TASK=${TASK/-Direct-v0/-Play-Direct-v0}
   echo "[$TAG] eval ($EVAL_TASK)"
