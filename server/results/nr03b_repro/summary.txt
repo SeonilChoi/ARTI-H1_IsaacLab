@@ -1,0 +1,11 @@
+status: OK
+tag: nr03b_repro
+script: server/train_nr03b_repro.sh
+num_envs: 4096
+run: logs/skrl/arti_h1_velocity/2026-11-14_00-57-24_ppo_torch
+checkpoint: logs/skrl/arti_h1_velocity/2026-11-14_00-57-24_ppo_torch/checkpoints/agent_120000.pt
+commit: 70d95bb (server)
+host: ip-10-126-198-57
+start: 2026-11-14 00:57:20
+end: 2026-11-14 03:49:31
+last progress: 100%|██████████| 120000/120000 [2:42:12<00:00, 12.33it/s]
