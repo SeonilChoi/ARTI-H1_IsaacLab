@@ -94,7 +94,9 @@ with torch.inference_mode():
                 hip_yaw_L_deg=float(np.degrees(Go[..., 5].mean())) if tilt.size else None,
                 hip_yaw_R_deg=float(np.degrees(Go[..., 6].mean())) if tilt.size else None)
     st = first_lo.cpu().numpy()
-    res[name] = dict(cmd=cmd, v=[float(x) for x in vm], falls=int(falls.sum().item()), fell_frac=float(fell.float().mean().item()),
+    ve = V[k0:].mean(0)  # per-env mean velocity (body frame): |vy| per env does not cancel between left / right drifters
+    res[name] = dict(cmd=cmd, v=[float(x) for x in vm], v_abs_env=[float(x) for x in np.abs(ve).mean(0)],
+                     dir_err_deg=float(np.degrees(np.arctan2(np.abs(ve[:, 1]), np.abs(ve[:, 0]) + 1e-6)).mean()), falls=int(falls.sum().item()), fell_frac=float(fell.float().mean().item()),
                      liftoff_per_s=float(lo_rate), start_ok_frac=float(np.mean(~np.isnan(st) & (st < 1.5))),
                      start_s=float(np.nanmean(st)) if not np.all(np.isnan(st)) else None, feet=feet, spacing=spacing, stab=stab)
     print(name, json.dumps(res[name]), flush=True)
@@ -110,6 +112,7 @@ pairs = [("fwd15", "L", "fwd15", "R"), ("back15", "L", "back15", "R"), ("fwd08",
 asy = [asym(*p) for p in pairs]
 moving = [n for n in SC if n not in ("stand", "push_stand")]
 fwd = res["fwd15"]["feet"]
+STRAIGHT = ("fwd15", "fwd08", "back15")
 S = dict(
     sym_peak_max_cm=max([x for x in asy if x is not None] or [99]), sym_peak_mean_cm=float(np.mean([x for x in asy if x is not None] or [99])),
     sym_missing=sum(x is None for x in asy),
@@ -121,6 +124,13 @@ S = dict(
     track_wz_small=float(np.mean([ratio(n, 2) for n in ("yawp1", "yawm1", "yawp2", "yawm2")])),
     track_wz_large=float(np.mean([ratio("yawp4", 2), ratio("yawm4", 2), ratio("arc", 2)])),
     drift_vy_fwd=res["fwd15"]["v"][1], drift_wz_fwd=res["fwd15"]["v"][2],
+    # straight-line quality (11-15): per-env |mean vy| on the pure forward / backward commands, as a fraction of |vx cmd|,
+    # and a score where sideways drift costs 2x a forward shortfall (a slower but straight gait ranks above a faster one
+    # that crabs): straight_score = mean(|vx| / |cmd| - 2 |vy| / |cmd|)
+    straight_vy_abs=float(np.mean([res[n]["v_abs_env"][1] for n in STRAIGHT])),
+    straight_lat_ratio=float(np.mean([res[n]["v_abs_env"][1] / abs(SC[n][0]) for n in STRAIGHT])),
+    straight_dir_err_deg=float(np.mean([res[n]["dir_err_deg"] for n in STRAIGHT])),
+    straight_score=float(np.mean([ratio(n, 0) - 2.0 * res[n]["v_abs_env"][1] / abs(SC[n][0]) for n in STRAIGHT])),
     stand_liftoff_per_s=res["stand"]["liftoff_per_s"],
     falls_nopush=sum(res[n]["falls"] for n in SC if not n.startswith("push")),
     push_fell_frac=float(np.mean([res["push_fwd10"]["fell_frac"], res["push_stand"]["fell_frac"]])),
