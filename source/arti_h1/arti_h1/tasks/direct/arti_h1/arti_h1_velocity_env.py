@@ -553,12 +553,16 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         foot_vz = self._foot_velocities()[..., 2]
         impact_v = torch.relu(-self.feet_vz_prev) * first_contact.float()
         self.feet_vz_prev.copy_(foot_vz)
-        # heel strike: at a real touchdown (swing peak above the contact height) of a moving command, the shortfall of the
-        # sole pitch (toes up) below heel_strike_target_rad, plus any excess above 2x the target (no stomping on the heel)
-        landed_hs = first_contact & (self.feet_peak_height > cfg.foot_contact_height) & (moving > 0).unsqueeze(-1)
+        # heel strike: at a real touchdown (swing peak above the contact height) of a forward command, the shortfall of the
+        # sole pitch (toes up) below heel_strike_target_rad, plus any excess above heel_strike_max_ratio x the target (no stomping on the heel)
+        # forward walking only (user 11-17): vx cmd > heel_strike_min_vx and |vy cmd| < vx cmd; sideways steps, turning in
+        # place and backward walking keep the flat-footed gait
+        fwd_cmd = (self.commands[:, 0] > cfg.heel_strike_min_vx) & (self.commands[:, 1].abs() < self.commands[:, 0])
+        landed_hs = first_contact & (self.feet_peak_height > cfg.foot_contact_height) & fwd_cmd.unsqueeze(-1)
         td_pitch = torch.asin(self._sole_toe_up)
+        landed_other = first_contact & (self.feet_peak_height > cfg.foot_contact_height) & ~fwd_cmd.unsqueeze(-1)
         tgt = max(cfg.heel_strike_target_rad, 1e-3)
-        hs_cost = (torch.square(torch.relu(tgt - td_pitch) / tgt) + torch.square(torch.relu(td_pitch - 2.0 * tgt) / tgt)) * landed_hs.float()
+        hs_cost = (torch.square(torch.relu(tgt - td_pitch) / tgt) + torch.square(torch.relu(td_pitch - cfg.heel_strike_max_ratio * tgt) / tgt)) * landed_hs.float()
 
         in_window = (self.feet_air_time > cfg.air_time_min_s) & (self.feet_air_time < cfg.air_time_max_s)
         if cfg.air_time_single_support_only:
@@ -745,6 +749,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "Metrics/touchdown_vz": impact_v.sum() / first_contact.float().sum().clamp_min(1),
             "Metrics/touchdown_pitch_deg": torch.rad2deg(td_pitch * landed_hs).sum() / landed_hs.float().sum().clamp_min(1),
             "Metrics/heel_first_frac": ((td_pitch > 0.0) & landed_hs).float().sum() / landed_hs.float().sum().clamp_min(1),
+            # same on the other touchdowns (sideways / turning / backward / standing steps): should stay near the old gait
+            "Metrics/touchdown_pitch_other_deg": torch.rad2deg(td_pitch * landed_other).sum() / landed_other.float().sum().clamp_min(1),
             "Metrics/body_rollpitch_rate": torch.linalg.norm(ang_w[:, :2], dim=-1).mean(),
             "Metrics/yaw_rate_err_rms": torch.sqrt(fine_yaw_err.mean()),
             "Metrics/lean_roll_deg": torch.rad2deg(torch.asin(self.roll_ema.clamp(-1, 1))).abs().mean(),

@@ -1,4 +1,5 @@
 #!/bin/bash
+# kbS02 (11-16) OBSOLETE, use kbS03 (heel strike too strong, stood on its heels and fell in the local copy kb12):
 # kbS02 (11-16): knee-bent (KB) line, NORMAL battery (deployable), on the server. Fine-tune kb10 (local, deployed
 # to the robot 11-16, humanoid_controller 8f81450).
 # kb10 (sim, real2sim conditions): falls 0, push 0.8 %, tilt 3.03, angvel .396, vx .64, yaw .80, straight |vy|/vx 9.5 %,
