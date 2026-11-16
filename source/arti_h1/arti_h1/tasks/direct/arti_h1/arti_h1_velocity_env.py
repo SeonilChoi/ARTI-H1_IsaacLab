@@ -28,7 +28,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed", "air_asymmetry", "cadence", "action_acc", "foot_impact", "yaw_rate_err", "lean_roll", "straight_drift", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
+        "swing_foot_speed", "air_asymmetry", "cadence", "action_acc", "foot_impact", "yaw_rate_err", "lean_roll", "straight_drift", "heel_strike", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
         "ref_swing", "hip_yaw_straight", "knee_extension", "track_yaw_velocity",
     )
 
@@ -98,6 +98,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         ]
         self.termination_body_offset = torch.tensor(self.cfg.termination_body_offset, dtype=torch.float32, device=dev).unsqueeze(0)
         self.up_axis_b = torch.tensor([[0.0, 0.0, 1.0]], dtype=torch.float32, device=dev)
+        self.fwd_axis_b = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32, device=dev)
         self.gravity_dir_w = torch.tensor([[0.0, 0.0, -1.0]], dtype=torch.float32, device=dev)
         self._support_body_ids = torch.tensor([self.ref_body_index], dtype=torch.int32, device=dev)
         self.termination_min_up_z = math.cos(self.cfg.termination_max_tilt_rad) if self.cfg.termination_max_tilt_rad > 0 else None
@@ -447,13 +448,21 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         and the first trial run (400 iterations) stood on tilted soles (25 deg) to farm air_time with the centre height.
         """
         d = self.robot.data
-        low, tilt = [], []
+        low, tilt, toe_up = [], [], []
+        # sole pitch, + = toes up / heel lower, along the trunk heading (corner order: heel-side pair, toe-side pair along
+        # the foot-link x axis; the sign follows that axis' projection on the trunk's forward axis)
+        fwd_w = quat_apply(d.body_quat_w.torch[:, self.ref_body_index], self.fwd_axis_b.expand(self.num_envs, -1))
         for bi, corners in zip(self.foot_body_indices, self.sole_corners):
             q = d.body_quat_w.torch[:, bi].unsqueeze(1).expand(-1, 4, -1)
             z = d.body_pos_w.torch[:, bi, 2:3] + quat_apply(q, corners.unsqueeze(0).expand(self.num_envs, -1, -1))[..., 2]
             low.append(z.min(dim=1).values)
+            x_w = quat_apply(d.body_quat_w.torch[:, bi], self.fwd_axis_b.expand(self.num_envs, -1))
+            sgn = torch.where((x_w[:, :2] * fwd_w[:, :2]).sum(-1) >= 0.0, 1.0, -1.0)
+            dz = z[:, 2:].mean(1) - z[:, :2].mean(1)
+            toe_up.append(sgn * dz / (2.0 * self.cfg.foot_sole_half_length))
             up_z = quat_apply(d.body_quat_w.torch[:, bi], self.up_axis_b.expand(self.num_envs, -1))[:, 2]
             tilt.append(1.0 - torch.square(up_z))
+        self._sole_toe_up = torch.stack(toe_up, 1).clamp(-1.0, 1.0)  # sin(sole pitch)
         return torch.stack(low, 1) - self.scene.env_origins[:, 2:3], torch.stack(tilt, 1)
 
     def _update_feet(self):
@@ -544,6 +553,12 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         foot_vz = self._foot_velocities()[..., 2]
         impact_v = torch.relu(-self.feet_vz_prev) * first_contact.float()
         self.feet_vz_prev.copy_(foot_vz)
+        # heel strike: at a real touchdown (swing peak above the contact height) of a moving command, the shortfall of the
+        # sole pitch (toes up) below heel_strike_target_rad, plus any excess above 2x the target (no stomping on the heel)
+        landed_hs = first_contact & (self.feet_peak_height > cfg.foot_contact_height) & (moving > 0).unsqueeze(-1)
+        td_pitch = torch.asin(self._sole_toe_up)
+        tgt = max(cfg.heel_strike_target_rad, 1e-3)
+        hs_cost = (torch.square(torch.relu(tgt - td_pitch) / tgt) + torch.square(torch.relu(td_pitch - 2.0 * tgt) / tgt)) * landed_hs.float()
 
         in_window = (self.feet_air_time > cfg.air_time_min_s) & (self.feet_air_time < cfg.air_time_max_s)
         if cfg.air_time_single_support_only:
@@ -637,6 +652,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             # second difference of the executed action: the 3-10 Hz body shudder of r21 / kb05 (11-14) lives here
             "action_acc": torch.sum(torch.square(executed - 2.0 * previous + previous2), dim=-1),
             "foot_impact": torch.sum(torch.square(impact_v), dim=-1) / self.step_dt,
+            # per touchdown (/ step_dt: the weight is the cost of one flat landing)
+            "heel_strike": hs_cost.sum(-1) / self.step_dt,
             "yaw_rate_err": fine_yaw_err,
             "lean_roll": torch.square(self.roll_ema),
             "straight_drift": straight_cmd * (torch.square(self.drift_ema[:, 0]) + torch.square(cfg.straight_drift_yaw_weight * self.drift_ema[:, 1])),            "air_time": in_window.float().sum(-1) * moving,
@@ -691,6 +708,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "cadence": cfg.rew_cadence,
             "action_acc": cfg.rew_action_acc,
             "foot_impact": cfg.rew_foot_impact,
+            "heel_strike": cfg.rew_heel_strike,
             "yaw_rate_err": cfg.rew_yaw_rate_err,
             "lean_roll": cfg.rew_lean_roll,
             "straight_drift": cfg.rew_straight_drift,
@@ -725,6 +743,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
                 self._curriculum_fraction(0.0, cfg.actuator_delay_extra_curriculum_steps), device=self.device),
             "Metrics/air_time_mean": (self.feet_air_time * in_air).sum() / in_air.sum().clamp_min(1),
             "Metrics/touchdown_vz": impact_v.sum() / first_contact.float().sum().clamp_min(1),
+            "Metrics/touchdown_pitch_deg": torch.rad2deg(td_pitch * landed_hs).sum() / landed_hs.float().sum().clamp_min(1),
+            "Metrics/heel_first_frac": ((td_pitch > 0.0) & landed_hs).float().sum() / landed_hs.float().sum().clamp_min(1),
             "Metrics/body_rollpitch_rate": torch.linalg.norm(ang_w[:, :2], dim=-1).mean(),
             "Metrics/yaw_rate_err_rms": torch.sqrt(fine_yaw_err.mean()),
             "Metrics/lean_roll_deg": torch.rad2deg(torch.asin(self.roll_ema.clamp(-1, 1))).abs().mean(),

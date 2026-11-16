@@ -196,6 +196,11 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # executed action; foot_impact = per touchdown, (downward foot speed the step before contact)^2. 0 = off.
     rew_action_acc = 0.0
     rew_foot_impact = 0.0
+    # heel strike (11-16, user: land slightly heel first): per real touchdown under a moving command,
+    # (relu(target - sole pitch) / target)^2 + (relu(sole pitch - 2 target) / target)^2, sole pitch + = toes up at the
+    # first-contact step. Metrics/touchdown_pitch_deg, Metrics/heel_first_frac. 0 = off.
+    rew_heel_strike = 0.0
+    heel_strike_target_rad = 0.06
     # yaw shudder (11-14): straight walking wobbles in yaw at 0.11-0.20 rad/s rms, >80 % above 3 Hz, with almost no net
     # heading drift; body_ang_vel covers roll / pitch only. L2 penalty on (wz cmd - wz body)^2. 0 = off.
     rew_yaw_rate_err = 0.0
