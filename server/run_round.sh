@@ -32,8 +32,12 @@ for a in "$@"; do
   esac
 done
 PY=${PY:-python}; export PY
-"$PY" -c "import sys" 2>/dev/null || { echo "PY=$PY does not run (server: PY=/opt/isaac/IsaacLab-main/.venv/bin/python)"; exit 1; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
+# use THIS folder's arti_h1 code: the package is an editable install pointing at whichever folder ran pip install, so a
+# second checkout (e.g. ../arti_h1_server_b) would otherwise train / eval with the first folder's code
+export PYTHONPATH="$ROOT/source/arti_h1${PYTHONPATH:+:$PYTHONPATH}"
+"$PY" -c "import sys" 2>/dev/null || { echo "PY=$PY does not run (server: PY=/opt/isaac/IsaacLab-main/.venv/bin/python)"; exit 1; }
+echo "[run_round] arti_h1 code: $("$PY" -c 'import arti_h1,os;print(os.path.dirname(arti_h1.__file__))' 2>/dev/null)"
 OUT=server/results/$TAG; mkdir -p "$OUT"
 START=$(date '+%F %T')
 
