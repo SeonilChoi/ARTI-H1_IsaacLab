@@ -86,7 +86,11 @@ with torch.inference_mode():
                 height_std_cm=float(Go[..., 4].std(0).mean() * 100) if tilt.size else None,
                 pitch_std_deg=float(np.degrees(np.arcsin(np.clip(Go[..., 0], -1, 1))).std()) if tilt.size else None,
                 hip_yaw_L_deg=float(np.degrees(Go[..., 5].mean())) if tilt.size else None,
-                hip_yaw_R_deg=float(np.degrees(Go[..., 6].mean())) if tilt.size else None)
+                hip_yaw_R_deg=float(np.degrees(Go[..., 6].mean())) if tilt.size else None,
+                # per-env mean roll (+ = right side down): envs leaning left / right cancel in a plain mean (11-16)
+                lean_abs_deg=float(np.abs(np.degrees(np.arcsin(np.clip(-Go[..., 1], -1, 1))).mean(0)).mean()) if tilt.size else None,
+                lean_p90_deg=float(np.percentile(np.abs(np.degrees(np.arcsin(np.clip(-Go[..., 1], -1, 1))).mean(0)), 90)) if tilt.size else None,
+                lean_signed_deg=float(np.degrees(np.arcsin(np.clip(-Go[..., 1], -1, 1))).mean()) if tilt.size else None)
     st = first_lo.cpu().numpy()
     ve = V[k0:].mean(0)  # per-env mean velocity (body frame): |vy| per env does not cancel between left / right drifters
     res[name] = dict(cmd=cmd, v=[float(x) for x in vm], v_abs_env=[float(x) for x in np.abs(ve).mean(0)],
@@ -135,6 +139,10 @@ S = dict(
     tilt_rms_deg=float(np.mean([res[n]["stab"]["tilt_rms_deg"] for n in moving if not n.startswith("push")])),
     angvel_xy_rms=float(np.mean([res[n]["stab"]["angvel_xy_rms"] for n in moving if not n.startswith("push")])),
     pitch_std_deg=float(np.mean([res[n]["stab"]["pitch_std_deg"] for n in moving if not n.startswith("push")])),
+    # per-env lean (|1 s.. 8 s mean roll|): standing, walking (moving scenarios without pushes), worst p90
+    lean_abs_stand_deg=res["stand"]["stab"]["lean_abs_deg"],
+    lean_abs_walk_deg=float(np.mean([res[n]["stab"]["lean_abs_deg"] for n in moving if not n.startswith("push")])),
+    lean_p90_max_deg=max(res[n]["stab"]["lean_p90_deg"] for n in SC if not n.startswith("push") and res[n]["stab"]["lean_p90_deg"] is not None),
     hip_yaw_absmax_deg=max(max(abs(res[n]["stab"]["hip_yaw_L_deg"]), abs(res[n]["stab"]["hip_yaw_R_deg"])) for n in ("fwd15", "fwd08", "back15", "left08", "right08")),
 )
 print("RSI_JSON " + json.dumps(dict(summary=S, scenarios=res)))
