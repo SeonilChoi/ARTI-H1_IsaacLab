@@ -51,6 +51,12 @@ if [ -z "$CK" ]; then
   echo "status: FAILED (exit $RC, no checkpoint)" > "$OUT/summary.txt"
 else
   cp "$CK" "$OUT/final.pt"
+  # intermediate checkpoints every 120k steps (pick the best point locally if the late run drifts / collapses)
+  mkdir -p "$OUT/mid"
+  for c in "$RUN"/checkpoints/agent_*.pt; do
+    s=${c##*agent_}; s=${s%.pt}
+    [ "$c" != "$CK" ] && [ $((s % 120000)) -eq 0 ] && cp "$c" "$OUT/mid/"
+  done
   cp -r "$RUN/params" "$OUT/" 2>/dev/null
   cp "$RUN"/events.out.tfevents.* "$OUT/" 2>/dev/null
   TASK=$(grep -oE -- "--task [^ ]+" "$SCRIPT" | head -1 | cut -d' ' -f2)
@@ -99,7 +105,7 @@ if [ "$PUSH" = 1 ]; then
   git lfs install --local >/dev/null 2>&1
   # add only the files that exist: one missing pathspec (e.g. no eval_summary.txt / mp4) makes git add stage nothing
   for f in "$OUT/summary.txt" "$OUT/train.log" "$OUT"/eval.json "$OUT"/eval_summary.txt "$OUT"/eval.log "$OUT"/params \
-           "$OUT"/events.out.tfevents.* "$OUT/final.pt" "$OUT"/*.mp4 "$OUT"/video.log; do
+           "$OUT"/events.out.tfevents.* "$OUT/final.pt" "$OUT"/mid/*.pt "$OUT"/*.mp4 "$OUT"/video.log; do
     [ -e "$f" ] && git add -f "$f"
   done
   git commit -m "server results: $TAG ($(head -1 "$OUT/summary.txt"))" \
