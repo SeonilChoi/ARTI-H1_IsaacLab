@@ -39,6 +39,7 @@ SC = {"stand": (0, 0, 0), "fwd15": (.15, 0, 0), "fwd08": (.08, 0, 0), "back15": 
       "arc": (.1, 0, .3), "push_fwd10": (.1, 0, 0), "push_stand": (0, 0, 0)}
 gen = torch.Generator(device=dev); gen.manual_seed(0)
 res = {}
+stand_obs = None
 with torch.inference_mode():
   for name, cmd in SC.items():
     obs, _ = env.reset(); cmdt = torch.tensor(cmd, device=dev, dtype=torch.float32)
@@ -52,6 +53,7 @@ with torch.inference_mode():
             vel = u.robot.data.root_vel_w.torch.clone(); vel[:, 0] += 0.4 * torch.cos(ang); vel[:, 1] += 0.4 * torch.sin(ang)
             u.robot.write_root_velocity_to_sim_index(root_velocity=vel)
         o = obs["policy"].clone(); o[:, -3:] = cmdt
+        if name == "stand" and k == int(8 / dt): stand_obs = o.clone()
         prev = u.feet_contact.clone()
         obs, r, te, tr, _ = env.step(pol(o))
         fell |= te; falls += te.float()
@@ -105,6 +107,17 @@ with torch.inference_mode():
                      start_s=float(np.nanmean(st)) if not np.all(np.isnan(st)) else None, feet=feet, spacing=spacing, stab=stab)
     print(name, json.dumps(res[name]), flush=True)
 
+# policy feedback gain (11-16): kb08 (low-pass 0.35) stood still in a self-sustained 8 Hz ankle-pitch oscillation on
+# the robot (not in sim); its d action / d gyro at the standing state was ~2x r21 (ankle pitch) and 3-7x (hip / knee).
+# Central differences of the policy output (actions, normalised action units) w.r.t.
+# the gyro observation (obs 0:3, rad/s) at each env's standing observation (8 s into "stand"); mean over envs.
+with torch.inference_mode():
+    so = stand_obs; h = 0.02; G_ = []
+    for i in range(3):
+        e = torch.zeros_like(so); e[:, i] = h; G_.append((pol(so + e) - pol(so - e)) / (2 * h))
+    G_ = torch.stack(G_, 1).abs().mean(0).cpu().numpy()  # (3 gyro, n_act) in action units per rad/s
+gain = dict(gyro_gain_sum=float(G_.sum()), gyro_y_gain_sagittal=float(G_[1].sum()), gyro_x_gain_lateral=float(G_[0].sum()))
+
 # summary scores
 def ratio(n, i): c = SC[n][i]; return res[n]["v"][i] / c
 def pk(n, f): return res[n]["feet"][f]["peak_cm"]
@@ -149,6 +162,7 @@ S = dict(
     lean_abs_stand_deg=res["stand"]["stab"]["lean_abs_deg"],
     lean_abs_walk_deg=float(np.mean([res[n]["stab"]["lean_abs_deg"] for n in moving if not n.startswith("push")])),
     lean_p90_max_deg=max(res[n]["stab"]["lean_p90_deg"] for n in SC if not n.startswith("push") and res[n]["stab"]["lean_p90_deg"] is not None),
+    gyro_gain_sum=gain["gyro_gain_sum"], gyro_y_gain_sagittal=gain["gyro_y_gain_sagittal"],
     hip_yaw_absmax_deg=max(max(abs(res[n]["stab"]["hip_yaw_L_deg"]), abs(res[n]["stab"]["hip_yaw_R_deg"])) for n in ("fwd15", "fwd08", "back15", "left08", "right08")),
 )
 print("RSI_JSON " + json.dumps(dict(summary=S, scenarios=res)))
