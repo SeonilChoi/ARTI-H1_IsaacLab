@@ -3,7 +3,7 @@
 #
 # usage (repo root, Isaac Lab python as $PY):
 #   server/run_round.sh <tag> <train script> [num_envs] [--push] [--no-video]
-#   e.g.  PY=/workspace/isaaclab/.venv/bin/python server/run_round.sh nr04c server/train_nr04c.sh 4096 --push
+#   e.g.  PY=/opt/isaac/IsaacLab-main/.venv/bin/python server/run_round.sh kbS03 server/train_kbS03.sh 4096 --push
 #
 # What it does
 #   1. runs <train script> and logs it to server/results/<tag>/train.log
@@ -32,6 +32,7 @@ for a in "$@"; do
   esac
 done
 PY=${PY:-python}; export PY
+"$PY" -c "import sys" 2>/dev/null || { echo "PY=$PY does not run (server: PY=/opt/isaac/IsaacLab-main/.venv/bin/python)"; exit 1; }
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
 OUT=server/results/$TAG; mkdir -p "$OUT"
 START=$(date '+%F %T')
@@ -40,12 +41,12 @@ echo "[$TAG] training: $SCRIPT num_envs=$N  (log: $OUT/train.log)"
 bash "$SCRIPT" "$N" 2>&1 | tee "$OUT/train.log"
 RC=${PIPESTATUS[0]}
 
-# run dir: the experiment name train.py prints (safe with several runs side by side), else the newest run
+# run dir: only the experiment name THIS train.log printed. (11-17: kbS02 failed at once with a wrong $PY, exit 127, and the
+# old "newest run" fallback packaged another run's checkpoints as kbS02.)
 EXP=$(grep -a "Exact experiment name requested" "$OUT/train.log" | tail -1 | sed 's/.*: //')
-if [ -n "$EXP" ]; then RUN=$(ls -d logs/skrl/*/"$EXP" 2>/dev/null | head -1); fi
-[ -n "${RUN:-}" ] || RUN=$(ls -td logs/skrl/*/*/ 2>/dev/null | head -1)
+RUN=""; [ -n "$EXP" ] && RUN=$(ls -d logs/skrl/*/"$EXP" 2>/dev/null | head -1)
 RUN=${RUN%/}
-CK=$(ls "$RUN"/checkpoints/agent_*.pt 2>/dev/null | sort -V | tail -1)
+CK=""; [ -n "$RUN" ] && CK=$(ls "$RUN"/checkpoints/agent_*.pt 2>/dev/null | sort -V | tail -1)
 if [ -z "$CK" ]; then
   echo "[$TAG] no checkpoint (train exit $RC) - last log lines:"; tail -30 "$OUT/train.log"
   echo "status: FAILED (exit $RC, no checkpoint)" > "$OUT/summary.txt"
