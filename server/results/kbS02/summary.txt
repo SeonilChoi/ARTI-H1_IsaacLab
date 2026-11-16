@@ -1,0 +1,10 @@
+status: train exit 127
+tag: kbS02
+script: server/train_kbS02.sh
+num_envs: 4096
+run: logs/skrl/arti_h1_velocity/2026-11-16_05-35-35_ppo_torch
+checkpoint: logs/skrl/arti_h1_velocity/2026-11-16_05-35-35_ppo_torch/checkpoints/agent_450000.pt
+commit: 6551b81 (server)
+host: ip-10-126-198-57
+start: 2026-11-16 12:14:20
+end: 2026-11-16 12:14:20
