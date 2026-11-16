@@ -199,6 +199,14 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # yaw shudder (11-14): straight walking wobbles in yaw at 0.11-0.20 rad/s rms, >80 % above 3 Hz, with almost no net
     # heading drift; body_ang_vel covers roll / pitch only. L2 penalty on (wz cmd - wz body)^2. 0 = off.
     rew_yaw_rate_err = 0.0
+    # lean / straight drift (11-16): ~1 s EMAs (drift_ema_tau_s). lean_roll = ema(sin roll)^2 (2 deg -> 1.2e-3);
+    # straight_drift = on pure forward / backward commands (|vx| > straight_cmd_min_vx), ema(vy)^2 +
+    # (straight_drift_yaw_weight * ema(wz - wz cmd))^2 (vy 0.012 m/s -> 1.4e-4). 0 = off.
+    rew_lean_roll = 0.0
+    rew_straight_drift = 0.0
+    drift_ema_tau_s = 1.0
+    straight_cmd_min_vx = 0.03
+    straight_drift_yaw_weight = 0.3
     # gait symmetry. With the legs not mirror images (right leg = left leg rotated pi about z), the knee-fine-tune policy
     # lifted the right foot 0.3-1.3 cm lower than the left (2.7-3.1 vs 3.3-4.0 cm), landed it 0.5 cm further forward
     # and 1.1 cm wider when walking forward, and stepped the left foot forward / the right foot back in place (yaw drift).

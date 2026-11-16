@@ -28,7 +28,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         "track_linear_velocity", "track_angular_velocity", "upright", "pose", "body_ang_vel", "angular_momentum",
         "dof_pos_limits", "action_rate_l2", "air_time", "foot_clearance", "foot_swing_height", "foot_slip",
         "feet_too_close", "foot_flat", "action_out_of_range", "track_linear_velocity_fine", "track_angular_velocity_fine",
-        "swing_foot_speed", "air_asymmetry", "cadence", "action_acc", "foot_impact", "yaw_rate_err", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
+        "swing_foot_speed", "air_asymmetry", "cadence", "action_acc", "foot_impact", "yaw_rate_err", "lean_roll", "straight_drift", "stance_knee_flex", "gait_symmetry", "stand_still_commanded", "track_lateral_velocity", "mirror_peak",
         "ref_swing", "hip_yaw_straight", "knee_extension", "track_yaw_velocity",
     )
 
@@ -124,6 +124,9 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_short_cycle = torch.zeros(n, 2, device=dev)
         # foot vertical velocity of the previous control step (touchdown impact = its downward part at first contact)
         self.feet_vz_prev = torch.zeros(n, 2, device=dev)
+        # ~1 s EMAs: pelvis roll (sin, from projected gravity y) and, per command hold, body vy / yaw-rate error
+        self.roll_ema = torch.zeros(n, device=dev)
+        self.drift_ema = torch.zeros(n, 2, device=dev)
         # per-foot moving averages over landings, mirrored (right y negated) so a symmetric gait gives left == right:
         # swing peak height, touchdown x / y in the heading frame relative to the root
         self.feet_land_peak_ema = torch.full((n, 2), self.cfg.foot_target_height, device=dev)
@@ -189,6 +192,7 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         cmd[side, 2] = 0.0
         cmd[r < standing_frac] = 0.0
         self.commands[env_ids] = cmd
+        self.drift_ema[env_ids] = 0.0
         lo, hi = cfg.command_resample_time_s
         self.command_timer[env_ids] = torch.empty(k, device=dev).uniform_(lo, hi)
 
@@ -555,6 +559,15 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         knee_flex = q_rel[:, self._knee_ids]  # + = more flexed than the default pose (default knee 0.2 rad)
         fine_lin_err = torch.sum(torch.square(self.commands[:, :2] - lin_b[:, :2]), dim=-1)
         fine_yaw_err = torch.square(self.commands[:, 2] - ang_b[:, 2])
+        # lean / straight-line drift (11-16): the real robot stands ~1-2 deg right side down (sim policies < 0.5 deg) and
+        # every policy crabs ~8-13 % sideways on straight commands with per-env drift directions that average out.
+        # Penalise the ~1 s means, not the gait sway itself.
+        a_ema = min(1.0, self.step_dt / max(cfg.drift_ema_tau_s, 1e-3))
+        self.roll_ema += a_ema * (gravity_b[:, 1] - self.roll_ema)
+        drift_now = torch.stack([lin_b[:, 1] - self.commands[:, 1], ang_b[:, 2] - self.commands[:, 2]], -1)
+        self.drift_ema += a_ema * (drift_now - self.drift_ema)
+        straight_cmd = ((self.commands[:, 0].abs() > cfg.straight_cmd_min_vx) & (self.commands[:, 1].abs() < 0.01)
+                        & (self.commands[:, 2].abs() < 0.05)).float()
         swing_err = torch.square(self.feet_peak_height / cfg.foot_target_height - 1.0) * first_contact.float()
         feet = self._foot_positions()
         heading = torch.atan2(2.0 * (root_quat[:, 3] * root_quat[:, 2] + root_quat[:, 0] * root_quat[:, 1]),
@@ -625,7 +638,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "action_acc": torch.sum(torch.square(executed - 2.0 * previous + previous2), dim=-1),
             "foot_impact": torch.sum(torch.square(impact_v), dim=-1) / self.step_dt,
             "yaw_rate_err": fine_yaw_err,
-            "air_time": in_window.float().sum(-1) * moving,
+            "lean_roll": torch.square(self.roll_ema),
+            "straight_drift": straight_cmd * (torch.square(self.drift_ema[:, 0]) + torch.square(cfg.straight_drift_yaw_weight * self.drift_ema[:, 1])),            "air_time": in_window.float().sum(-1) * moving,
             "foot_clearance": torch.sum(torch.abs(height - cfg.foot_target_height) * foot_vel_xy, dim=-1) * moving,
             "foot_swing_height": swing_err.sum(-1) * moving,
             "foot_slip": torch.sum(torch.square(foot_vel_xy) * contact.float(), dim=-1) * moving,
@@ -678,6 +692,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "action_acc": cfg.rew_action_acc,
             "foot_impact": cfg.rew_foot_impact,
             "yaw_rate_err": cfg.rew_yaw_rate_err,
+            "lean_roll": cfg.rew_lean_roll,
+            "straight_drift": cfg.rew_straight_drift,
             "stance_knee_flex": cfg.rew_stance_knee_flex,
             "gait_symmetry": cfg.rew_gait_symmetry,
             "stand_still_commanded": cfg.rew_stand_still_commanded,
@@ -711,6 +727,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
             "Metrics/touchdown_vz": impact_v.sum() / first_contact.float().sum().clamp_min(1),
             "Metrics/body_rollpitch_rate": torch.linalg.norm(ang_w[:, :2], dim=-1).mean(),
             "Metrics/yaw_rate_err_rms": torch.sqrt(fine_yaw_err.mean()),
+            "Metrics/lean_roll_deg": torch.rad2deg(torch.asin(self.roll_ema.clamp(-1, 1))).abs().mean(),
+            "Metrics/straight_vy_drift": (straight_cmd * self.drift_ema[:, 0].abs()).sum() / straight_cmd.sum().clamp_min(1),
             "Metrics/action_acc_rms": torch.sqrt(torch.mean(torch.square(executed - 2.0 * previous + previous2))),
             "Metrics/peak_height_mean": mean_peak_at_landing,
             "Metrics/slip_velocity_mean": (foot_vel_xy * contact).sum() / contact.sum().clamp_min(1),
@@ -824,6 +842,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.feet_cycle_time[env_ids] = 10.0
         self.feet_short_cycle[env_ids] = 0.0
         self.feet_vz_prev[env_ids] = 0.0
+        self.roll_ema[env_ids] = 0.0
+        self.drift_ema[env_ids] = 0.0
         self.feet_land_peak_ema[env_ids] = self.cfg.foot_target_height
         self.feet_land_xy_ema[env_ids, :, 0] = 0.0
         self.feet_land_xy_ema[env_ids, :, 1] = self.cfg.gait_symmetry_nominal_y
