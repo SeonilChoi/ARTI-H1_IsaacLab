@@ -1,0 +1,11 @@
+status: OK
+tag: kb14s
+script: server/train_kb14s.sh
+num_envs: 4096
+run: logs/skrl/arti_h1_velocity/2026-11-17_01-51-14_ppo_torch
+checkpoint: logs/skrl/arti_h1_velocity/2026-11-17_01-51-14_ppo_torch/checkpoints/agent_240000.pt
+commit: c4410a1 (server-b)
+host: ip-10-126-198-57
+start: 2026-11-17 01:51:09
+end: 2026-11-17 12:55:12
+last progress: 100%|██████████| 240000/240000 [10:44:57<00:00,  6.20it/s]
