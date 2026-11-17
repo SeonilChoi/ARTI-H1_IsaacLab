@@ -109,6 +109,14 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.previous_actions = torch.zeros_like(self.actions)
         self.previous_actions2 = torch.zeros_like(self.actions)
         self.q_target = self.robot.data.default_joint_pos.torch.clone()  # commanded target (policy frame, sim order)
+        # Olaf (Disney, arXiv 2512.16705) runtime: control-rate target upsampled to the actuator rate by first-order hold
+        # (linear ramp from the previous to the new target over one control step), then a low-pass (cfg.target_foh /
+        # cfg.target_substep_lowpass_hz; the real controller: policy.target_foh / policy.target_substep_lowpass_hz)
+        self.q_target_prev = self.q_target.clone()
+        self.q_target_sub = self.q_target.clone()
+        self._substep = 0
+        self._sub_lp_alpha = (1.0 - math.exp(-2.0 * math.pi * self.cfg.target_substep_lowpass_hz * self.cfg.sim.dt)
+                              if self.cfg.target_substep_lowpass_hz > 0.0 else 1.0)
         self.feet_air_time = torch.zeros(n, 2, device=dev)
         self.feet_contact = torch.ones(n, 2, dtype=torch.bool, device=dev)
         self.feet_peak_height = torch.zeros(n, 2, device=dev)
@@ -219,12 +227,22 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         if self.cfg.target_rate_limit > 0.0:
             dq = self.cfg.target_rate_limit * self.step_dt
             target = torch.clamp(target, self.q_target - dq, self.q_target + dq)
+        self.q_target_prev.copy_(self.q_target)
+        self._substep = 0
         self.q_target.copy_(target)
         if getattr(self, "actuator_jitter_max", 0) > 0:
             self.actuator_jitter.random_(0, self.cfg.actuator_delay_step_jitter + 1).mul_(self.cfg.decimation)
 
     def _apply_action(self):
-        target = self.q_target.clone()
+        if self.cfg.target_foh:
+            s = min(1.0, (self._substep + 1) / self.cfg.decimation)
+            target = self.q_target_prev + s * (self.q_target - self.q_target_prev)
+        else:
+            target = self.q_target.clone()
+        self._substep += 1
+        if self._sub_lp_alpha < 1.0:
+            self.q_target_sub.add_(self._sub_lp_alpha * (target - self.q_target_sub))
+            target = self.q_target_sub.clone()
         if hasattr(self, "joint_obs_offset"):
             # homing / encoder zero error: targets and joint obs are in the encoder frame (see ArtiH1AmpEnv._apply_action)
             target = target - self.joint_obs_offset
@@ -858,6 +876,8 @@ class ArtiH1VelocityEnv(DirectRLEnv):
         self.previous_actions[env_ids] = 0.0
         self.previous_actions2[env_ids] = 0.0
         self.q_target[env_ids] = self.robot.data.default_joint_pos.torch[env_ids]
+        self.q_target_prev[env_ids] = self.q_target[env_ids]
+        self.q_target_sub[env_ids] = self.q_target[env_ids]
         self.feet_air_time[env_ids] = 0.0
         self.feet_contact[env_ids] = True
         self.feet_peak_height[env_ids] = 0.0

@@ -247,6 +247,12 @@ class ArtiH1VelocityEnvCfg(ArtiH1AmpEnvCfg):
     # First-order low-pass on the joint target each control step, before the rate limit: target = prev + alpha * (new - prev).
     # 1 (or 0) = off. 11-11 real r12 run: 30 Hz period-2 chatter (the real joints follow the target faster than the sim).
     target_lowpass_alpha = 1.0
+    # Olaf (Disney, arXiv 2512.16705, Sec. VII-C) runtime pipeline: the control-rate target is upsampled to the actuator
+    # rate by first-order hold (linear ramp from the previous to the new target over one control step, here per physics
+    # substep) and then low-pass filtered (37.5 Hz in the paper). Adds ~8 ms (FOH) + ~4 ms (37.5 Hz) of target lag, so
+    # the real controller must use the same: policy.target_foh / policy.target_substep_lowpass_hz. False / 0 = off.
+    target_foh = False
+    target_substep_lowpass_hz = 0.0
     # Knee flexion floor: sum over knees of relu(knee_extension_min - knee)^2 (absolute joint angle, default 0.2 rad).
     # NOTE the knee sign: q = 0 is a 90 deg bend and +q EXTENDS the leg (hip-ankle 10.5 cm at 0, 11.5 at 0.2, 8.2 at
     # -0.4), the same in both legs (right leg = left rotated pi about z, so it bends the other way in the world). So
